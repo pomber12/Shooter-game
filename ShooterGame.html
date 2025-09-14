@@ -111,17 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- Jump Button ---
-  jumpButton.addEventListener('click', () => {
-    if (onGround) {
-      vel.y = 10; // Jump velocity
-      onGround = false;
-      if (jumpIndicator) {
-        jumpIndicator.textContent = 'Jumping!';
-        setTimeout(() => jumpIndicator.textContent = '', 500);
-      }
-      console.log('Jump triggered via button, new vel.y:', vel.y); // Debug: Confirm button jump
-    }
-  });
+  
 
   // --- Movement ---
   const vel = new THREE.Vector3();
