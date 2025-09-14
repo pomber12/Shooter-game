@@ -12,6 +12,7 @@
     #crosshair:before{left:8px;top:0;width:2px;height:18px}
     #crosshair:after{left:0;top:8px;width:18px;height:2px}
     #jumpIndicator { position: absolute; top: 40px; left: 12px; color: #ffd86b; font-size: 14px; }
+    #jumpButton { position: absolute; top: 60px; left: 12px; padding: 5px 10px; background: #ffd86b; border: none; border-radius: 4px; cursor: pointer; }
     #gameArea { width: 100%; height: 100%; tabindex="0"; outline: none; } /* Make focusable */
   </style>
 </head>
@@ -19,6 +20,7 @@
   <div id="hud">Здраве: <span id="hp">100</span> · Точки: <span id="score">0</span></div>
   <div id="crosshair"></div>
   <div id="jumpIndicator"></div>
+  <button id="jumpButton">Jump</button>
   <div id="gameArea"></div>
 
 <script type="module">
@@ -35,10 +37,11 @@ let isMouseDown=false, lastX=0, lastY=0;
 document.addEventListener('DOMContentLoaded', () => {
   console.log('Script loaded and DOM ready'); // Debug: Confirm script execution
   const jumpIndicator = document.getElementById('jumpIndicator');
+  const jumpButton = document.getElementById('jumpButton');
   const gameArea = document.getElementById('gameArea');
 
-  if (!jumpIndicator || !gameArea) {
-    console.error('Jump indicator or game area not found');
+  if (!jumpIndicator || !jumpButton || !gameArea) {
+    console.error('Jump indicator, button, or game area not found');
     return;
   }
 
@@ -95,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.addEventListener('mouseup', () => { isMouseDown = false; });
   window.addEventListener('mousemove', e => {
-    if (isMouseDown) { // Require left button hold for looking
+    if (isMouseDown) { // Revert to old behavior: require left button hold
       const dx = e.clientX - lastX;
       const dy = e.clientY - lastY;
       yaw -= dx * 0.002;
@@ -104,6 +107,19 @@ document.addEventListener('DOMContentLoaded', () => {
       yaw = ((yaw + Math.PI) % (2 * Math.PI)) - Math.PI; // Normalize yaw for 360-degree horizontal rotation
       lastX = e.clientX;
       lastY = e.clientY;
+    }
+  });
+
+  // --- Jump Button ---
+  jumpButton.addEventListener('click', () => {
+    if (onGround) {
+      vel.y = 10; // Jump velocity
+      onGround = false;
+      if (jumpIndicator) {
+        jumpIndicator.textContent = 'Jumping!';
+        setTimeout(() => jumpIndicator.textContent = '', 500);
+      }
+      console.log('Jump triggered via button, new vel.y:', vel.y); // Debug: Confirm button jump
     }
   });
 
