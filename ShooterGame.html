@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>FPS Demo with Trees — Three.js (No Pointer Lock)</title>
+  <title>FPS Demo with Infinite Grassy Map — Three.js</title>
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #0b0b0b; color: #eee; font-family: sans-serif; }
     #hud { position: absolute; left: 12px; top: 12px; z-index: 10; background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 8px; }
@@ -104,7 +104,7 @@ function playEnemyDeath() {
 }
 
 // Global variables
-let scene, camera, renderer, clock;
+let scene, camera, renderer, clock, floorTiles = [];
 let player, yaw = 0, pitch = 0;
 const bullets = [], enemies = [], chests = [], trees = [];
 let score = 0, hp = 100, bulletCount = 50;
@@ -114,6 +114,67 @@ let paused = true;
 let animationFrameId = null;
 const vel = new THREE.Vector3();
 let onGround = true;
+
+// Grass texture and shader
+let grassTexture = null;
+const textureLoader = new THREE.TextureLoader();
+textureLoader.load(
+  'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/terrain/grasslight-big.jpg',
+  (texture) => {
+    grassTexture = texture;
+    grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
+    grassTexture.repeat.set(10, 10);
+    console.log('Grass texture loaded successfully');
+    updateFloorMaterial();
+  },
+  undefined,
+  (err) => {
+    console.error('Failed to load grass texture:', err.message);
+    updateFloorMaterial();
+  }
+);
+
+function updateFloorMaterial() {
+  const vertexShader = `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+  const fragmentShader = `
+    uniform sampler2D grassTexture;
+    uniform vec3 playerPos;
+    uniform bool useTexture;
+    varying vec2 vUv;
+    void main() {
+      vec3 color;
+      if (useTexture) {
+        vec4 tex = texture2D(grassTexture, vUv);
+        vec3 pos = vec3(vUv.x * 100.0 - 50.0, 0.0, vUv.y * 100.0 - 50.0);
+        float dist = distance(pos.xz, playerPos.xz);
+        float bendFactor = clamp(1.0 - dist / 2.0, 0.0, 1.0);
+        color = tex.rgb * (1.0 - bendFactor * 0.3);
+      } else {
+        color = vec3(0.18, 0.55, 0.34); // Fallback green (0x2E8B57)
+      }
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      grassTexture: { value: grassTexture || new THREE.Texture() },
+      playerPos: { value: new THREE.Vector3(0, 1.6, 0) },
+      useTexture: { value: !!grassTexture }
+    },
+    vertexShader,
+    fragmentShader
+  });
+  floorTiles.forEach(tile => {
+    tile.material = material;
+  });
+  console.log('Floor material updated with', grassTexture ? 'texture' : 'fallback green');
+}
 
 // Wait for DOM to load
 document.addEventListener('DOMContentLoaded', async () => {
@@ -148,13 +209,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         keys[key] = true;
         console.log(`Key down: ${key}, keys:`, keys);
       }
-      if (e.keyCode === 27) { // Esc key to toggle pause/resume
+      if (e.keyCode === 27) {
         paused = !paused;
         pauseMessage.style.display = paused ? 'block' : 'none';
         if (paused) {
           cancelAnimationFrame(animationFrameId);
           console.log('Game paused');
         } else {
+          gameArea.focus();
           animate();
           console.log('Game resumed');
         }
@@ -273,7 +335,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         minDist = dist;
         closestTree = tree;
       }
-      if (dist < 1.0) { // Reduced collision radius
+      if (dist < 1.0) {
         canMove = false;
         console.log('Collision detected with tree at:', tree.position, 'distance:', dist);
       }
@@ -285,8 +347,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('Player position updated:', player.position);
     } else {
       console.log('Movement blocked by tree at:', closestTree.position, 'closest distance:', minDist);
-      // Allow y movement for jumping/falling
-      player.position.y = newPosition.y;
+      player.position.y = newPosition.y; // Allow y movement
       console.log('Updated y position only:', player.position);
     }
 
@@ -297,6 +358,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('Landed, onGround:', onGround);
     }
     player.rotation.set(pitch, yaw, 0);
+
+    // Update floor tiles
+    const tileSize = 100;
+    const centerX = Math.floor(player.position.x / tileSize) * tileSize;
+    const centerZ = Math.floor(player.position.z / tileSize) * tileSize;
+    floorTiles.forEach((tile, i) => {
+      const dx = (i % 3 - 1) * tileSize;
+      const dz = (Math.floor(i / 3) - 1) * tileSize;
+      tile.position.set(centerX + dx, 0, centerZ + dz);
+      tile.material.uniforms.playerPos.value.copy(player.position);
+      tile.material.uniforms.useTexture.value = !!grassTexture;
+    });
+    console.log('Floor tiles updated, center:', new THREE.Vector3(centerX, 0, centerZ));
 
     // Check chest collision
     for (let i = chests.length - 1; i >= 0; i--) {
@@ -334,13 +408,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Enemies
   function spawnEnemy() {
     const e = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.6, 1.2), new THREE.MeshStandardMaterial({ color: 0xff6b6b }));
-    const r = 20 + Math.random() * 30, ang = Math.random() * Math.PI * 2;
-    e.position.set(Math.cos(ang) * r, 0.8, Math.sin(ang) * r);
+    const r = 20 + Math.random() * 30;
+    const ang = Math.random() * Math.PI * 2;
+    e.position.set(player.position.x + Math.cos(ang) * r, 0.8, player.position.z + Math.sin(ang) * r);
     e.userData = { hp: 50, speed: 1.5 };
     if (e instanceof THREE.Object3D) {
       scene.add(e);
       enemies.push(e);
-      console.log('Enemy spawned at:', e.position);
+      console.log('Enemy spawned at:', e.position, 'relative to player:', player.position);
     } else {
       console.error('Enemy is not an Object3D:', e);
     }
@@ -349,12 +424,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Spawn Chest
   function spawnChest() {
     const chest = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 1), new THREE.MeshStandardMaterial({ color: 0x8B4513 }));
-    const r = 15 + Math.random() * 25, ang = Math.random() * Math.PI * 2;
-    chest.position.set(Math.cos(ang) * r, 0.25, Math.sin(ang) * r);
+    const r = 15 + Math.random() * 25;
+    const ang = Math.random() * Math.PI * 2;
+    chest.position.set(player.position.x + Math.cos(ang) * r, 0.25, player.position.z + Math.sin(ang) * r);
     if (chest instanceof THREE.Object3D) {
       scene.add(chest);
       chests.push(chest);
-      console.log('Chest spawned at:', chest.position);
+      console.log('Chest spawned at:', chest.position, 'relative to player:', player.position);
     } else {
       console.error('Chest is not an Object3D:', chest);
     }
@@ -365,41 +441,77 @@ document.addEventListener('DOMContentLoaded', async () => {
     const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.3, 2, 8);
     const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4A2F27 });
     const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-    trunk.position.y = 1; // Center of trunk at y=1
+    trunk.position.y = 1;
 
     const foliageGeometry = new THREE.ConeGeometry(1.5, 3, 8);
     const foliageMaterial = new THREE.MeshStandardMaterial({ color: 0x2E8B57 });
     const foliage = new THREE.Mesh(foliageGeometry, foliageMaterial);
-    foliage.position.y = 2.5; // Above trunk
+    foliage.position.y = 2.5;
 
     const tree = new THREE.Group();
     tree.add(trunk);
     tree.add(foliage);
 
-    // Random position, avoiding player start (x=0, z=0)
     let r, ang, dist;
     do {
-      r = 15 + Math.random() * 35; // Increased minimum distance
+      r = 20 + Math.random() * 30; // Increased min distance to 20
       ang = Math.random() * Math.PI * 2;
-      tree.position.set(Math.cos(ang) * r, 0, Math.sin(ang) * r);
-      dist = tree.position.distanceTo(new THREE.Vector3(0, 0, 0));
-    } while (dist < 15); // Minimum distance 15 units
+      tree.position.set(player.position.x + Math.cos(ang) * r, 0, player.position.z + Math.sin(ang) * r);
+      dist = tree.position.distanceTo(player.position);
+    } while (dist < 20);
 
     if (tree instanceof THREE.Object3D) {
       scene.add(tree);
       trees.push(tree);
-      console.log('Tree spawned at:', tree.position, 'distance from origin:', dist);
+      console.log('Tree spawned at:', tree.position, 'distance from player:', dist);
     } else {
       console.error('Tree is not an Object3D:', tree);
     }
+  }
+
+  // Manage objects
+  function manageObjects() {
+    const maxDistance = 60;
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      const dist = player.position.distanceTo(e.position);
+      if (dist > maxDistance) {
+        scene.remove(e);
+        enemies.splice(i, 1);
+        console.log('Removed enemy at:', e.position, 'distance:', dist);
+      }
+    }
+    for (let i = chests.length - 1; i >= 0; i--) {
+      const c = chests[i];
+      const dist = player.position.distanceTo(c.position);
+      if (dist > maxDistance) {
+        scene.remove(c);
+        chests.splice(i, 1);
+        console.log('Removed chest at:', c.position, 'distance:', dist);
+      }
+    }
+    for (let i = trees.length - 1; i >= 0; i--) {
+      const t = trees[i];
+      const dist = player.position.distanceTo(t.position);
+      if (dist > maxDistance) {
+        scene.remove(t);
+        trees.splice(i, 1);
+        console.log('Removed tree at:', t.position, 'distance:', dist);
+      }
+    }
+    while (enemies.length < 5) spawnEnemy();
+    while (chests.length < 2) spawnChest();
+    while (trees.length < 12) spawnTree();
+    console.log('Object counts - Enemies:', enemies.length, 'Chests:', chests.length, 'Trees:', trees.length);
   }
 
   // Animation loop
   function animate() {
     if (!paused) {
       const dt = Math.min(0.05, clock.getDelta());
-      console.log('Animating, dt:', dt, 'paused:', paused);
+      console.log('Animating, dt:', dt, 'paused:', paused, 'player position:', player.position);
       updateMovement(dt);
+      manageObjects();
 
       // Update bullets
       for (let i = bullets.length - 1; i >= 0; i--) {
@@ -449,10 +561,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      // Spawn enemies and chests
-      if (enemies.length < 5 && Math.random() < 0.01) spawnEnemy();
-      if (chests.length < 3 && Math.random() < 0.005) spawnChest();
-
       camera.position.copy(player.position);
       camera.rotation.copy(player.rotation);
       renderer.render(scene, camera);
@@ -487,25 +595,39 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.error('AmbientLight is not an Object3D:', ambLight);
     }
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x222528 }));
-    floor.rotation.x = -Math.PI / 2;
-    if (floor instanceof THREE.Object3D) {
-      scene.add(floor);
-      console.log('Floor added to scene');
-    } else {
-      console.error('Floor is not an Object3D:', floor);
+    // Create 3x3 floor tiles
+    const tileSize = 100;
+    for (let i = 0; i < 9; i++) {
+      const dx = (i % 3 - 1) * tileSize;
+      const dz = (Math.floor(i / 3) - 1) * tileSize;
+      const tile = new THREE.Mesh(
+        new THREE.PlaneGeometry(tileSize, tileSize),
+        new THREE.MeshStandardMaterial({ color: 0x2E8B57 })
+      );
+      tile.rotation.x = -Math.PI / 2;
+      tile.position.set(dx, 0, dz);
+      if (tile instanceof THREE.Object3D) {
+        scene.add(tile);
+        floorTiles.push(tile);
+        console.log(`Floor tile ${i} added at:`, tile.position);
+      } else {
+        console.error(`Floor tile ${i} is not an Object3D:`, tile);
+      }
     }
+    updateFloorMaterial();
 
     player = new THREE.Object3D();
     player.position.set(0, 1.6, 0);
     if (player instanceof THREE.Object3D) {
       scene.add(player);
       console.log('Player added to scene at:', player.position);
-      // Log initial distances to trees
       setTimeout(() => {
         trees.forEach((tree, i) => {
           const dist = player.position.distanceTo(tree.position);
           console.log(`Initial distance to tree ${i} at:`, tree.position, 'is:', dist);
+          if (dist < 20) {
+            console.warn(`Tree ${i} too close to player at distance:`, dist);
+          }
         });
       }, 0);
     } else {
@@ -514,7 +636,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     for (let i = 0; i < 5; i++) spawnEnemy();
     for (let i = 0; i < 2; i++) spawnChest();
-    for (let i = 0; i < 12; i++) spawnTree(); // Spawn 12 trees
+    for (let i = 0; i < 12; i++) spawnTree();
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
