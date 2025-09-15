@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>FPS Demo — Three.js (No Pointer Lock)</title>
   <style>
-    html,body{height:100%;margin:0;overflow:hidden;background:#0b0b0b;color:#eee;font-family:sans-serif}
-    #hud{position:absolute;left:12px;top:12px;z-index:10;background:rgba(0,0,0,0.5);padding:6px 10px;border-radius:8px}
-    #crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:18px;height:18px;pointer-events:none;z-index:9}
-    #crosshair:before,#crosshair:after{content:'';position:absolute;background:#ffd86b}
-    #crosshair:before{left:8px;top:0;width:2px;height:18px}
-    #crosshair:after{left:0;top:8px;width:18px;height:2px}
+    html, body { height: 100%; margin: 0; overflow: hidden; background: #0b0b0b; color: #eee; font-family: sans-serif; }
+    #hud { position: absolute; left: 12px; top: 12px; z-index: 10; background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 8px; }
+    #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 18px; height: 18px; pointer-events: none; z-index: 9; }
+    #crosshair:before, #crosshair:after { content: ''; position: absolute; background: #ffd86b; }
+    #crosshair:before { left: 8px; top: 0; width: 2px; height: 18px; }
+    #crosshair:after { left: 0; top: 8px; width: 18px; height: 2px; }
     #gameArea { width: 100%; height: 100%; tabindex="0"; outline: none; }
     #menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 20; }
     #menu button { padding: 15px 30px; font-size: 20px; background: #ffd86b; border: none; border-radius: 5px; cursor: pointer; }
@@ -39,8 +39,6 @@ let gunshotBuffer = null, enemyHitBuffer = null, enemyDeathBuffer = null;
 
 async function setupSound() {
   const sampleRate = 44100;
-
-  // Gunshot sound
   const gunshotDuration = 0.1;
   const gunshotSamples = sampleRate * gunshotDuration;
   const gunshotData = new Float32Array(gunshotSamples);
@@ -54,7 +52,6 @@ async function setupSound() {
   gunshotBufferTemp.copyToChannel(gunshotData, 0);
   gunshotBuffer = gunshotBufferTemp;
 
-  // Enemy hit sound
   const hitDuration = 0.15;
   const hitSamples = sampleRate * hitDuration;
   const hitData = new Float32Array(hitSamples);
@@ -68,7 +65,6 @@ async function setupSound() {
   enemyHitBufferTemp.copyToChannel(hitData, 0);
   enemyHitBuffer = enemyHitBufferTemp;
 
-  // Enemy death sound
   const deathDuration = 0.2;
   const deathSamples = sampleRate * deathDuration;
   const deathData = new Float32Array(deathSamples);
@@ -116,11 +112,13 @@ const keys = { w: false, a: false, s: false, d: false, space: false };
 let isMouseDown = false, lastX = 0, lastY = 0;
 let paused = true;
 let animationFrameId = null;
+const vel = new THREE.Vector3();
+let onGround = true;
 
 // Wait for DOM to load
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('Script loaded and DOM ready'); // Debug: Confirm script execution
-  await setupSound(); // Initialize sound
+  console.log('Script loaded and DOM ready');
+  await setupSound();
   const gameArea = document.getElementById('gameArea');
   const playButton = document.getElementById('playButton');
   const pauseMessage = document.getElementById('pauseMessage');
@@ -131,19 +129,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  console.log('Event listeners attached'); // Debug: Confirm listener setup
+  console.log('Event listeners attaching');
 
-  // --- Input ---
+  // Ensure focus on click
+  window.addEventListener('click', () => {
+    gameArea.focus();
+    console.log('Window clicked, gameArea focused, activeElement:', document.activeElement);
+  });
+
+  // Input listeners
   window.addEventListener('keydown', e => {
-    console.log('Key event triggered, key:', e.key, 'code:', e.code, 'keyCode:', e.keyCode, 'activeElement:', document.activeElement); // Debug
+    console.log('Key event:', e.key, e.code, e.keyCode, 'activeElement:', document.activeElement);
     if (e.target.tagName !== 'BUTTON') {
       e.preventDefault();
-      e.stopPropagation();
-      gameArea.focus(); // Ensure focus on game area
-      const key = e.key.toLowerCase();
-      if (key in keys) {
+      gameArea.focus();
+      const key = e.code === 'Space' ? 'space' : e.key.toLowerCase();
+      if (['w', 'a', 's', 'd', 'space'].includes(key)) {
         keys[key] = true;
-        console.log(`Key down: ${key}, keys:`, keys); // Debug key state
+        console.log(`Key down: ${key}, keys:`, keys);
       }
       if (e.keyCode === 27) { // Esc key to toggle pause/resume
         paused = !paused;
@@ -158,22 +161,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
   });
+
   window.addEventListener('keyup', e => {
     if (e.target.tagName !== 'BUTTON') {
-      const key = e.key.toLowerCase();
-      if (key in keys) {
+      const key = e.code === 'Space' ? 'space' : e.key.toLowerCase();
+      if (['w', 'a', 's', 'd', 'space'].includes(key)) {
         keys[key] = false;
-        console.log(`Key up: ${key}, keys:`, keys); // Debug key release
+        console.log(`Key up: ${key}, keys:`, keys);
       }
-    }
-  });
-
-  // Separate Space bar listener for direct jump
-  window.addEventListener('keydown', e => {
-    if (e.target.tagName !== 'BUTTON' && (e.key === ' ' || e.code === 'Space' || e.keyCode === 32) && onGround && !paused) {
-      vel.y = 10;
-      onGround = false;
-      console.log('Direct jump triggered with Space, new vel.y:', vel.y);
     }
   });
 
@@ -183,14 +178,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       lastX = e.clientX;
       lastY = e.clientY;
       gameArea.focus();
-      console.log('Game area focused, activeElement:', document.activeElement);
+      console.log('Mouse down, gameArea focused, activeElement:', document.activeElement);
       shoot();
     }
   });
+
   gameArea.addEventListener('focus', () => {
-    console.log('Game area focused via focus event, activeElement:', document.activeElement);
+    console.log('Game area focused, activeElement:', document.activeElement);
   });
-  window.addEventListener('mouseup', () => { isMouseDown = false; });
+
+  window.addEventListener('mouseup', () => {
+    isMouseDown = false;
+  });
+
   window.addEventListener('mousemove', e => {
     if (isMouseDown && !paused) {
       const dx = e.clientX - lastX;
@@ -201,68 +201,64 @@ document.addEventListener('DOMContentLoaded', async () => {
       yaw = ((yaw + Math.PI) % (2 * Math.PI)) - Math.PI;
       lastX = e.clientX;
       lastY = e.clientY;
+      console.log('Mouse move, yaw:', yaw, 'pitch:', pitch);
     }
   });
 
-  // --- Start Game ---
+  // Start game
   playButton.addEventListener('click', () => {
     paused = false;
     document.getElementById('menu').style.display = 'none';
     gameArea.focus();
+    console.log('Play button clicked, paused:', paused, 'gameArea focused:', document.activeElement === gameArea);
     init();
     animate();
-    console.log('Game started');
   });
 
-  // --- Resume Game ---
+  // Resume game
   resumeButton.addEventListener('click', () => {
     paused = false;
     pauseMessage.style.display = 'none';
     gameArea.focus();
+    console.log('Resume button clicked, paused:', paused, 'gameArea focused:', document.activeElement === gameArea);
     animate();
-    console.log('Game resumed');
   });
 
-  // --- Movement ---
-  const vel = new THREE.Vector3();
-  let onGround = true;
+  // Movement
   function updateMovement(dt) {
     if (paused) {
-      console.log('Movement paused, keys:', keys); // Debug
+      console.log('Movement paused, keys:', keys);
       return;
     }
-    console.log('Updating movement, keys:', keys); // Debug
+    console.log('Updating movement, keys:', keys, 'onGround:', onGround);
     const dir = new THREE.Vector3();
     if (keys.w) dir.z -= 1;
     if (keys.s) dir.z += 1;
     if (keys.a) dir.x -= 1;
     if (keys.d) dir.x += 1;
+    console.log('Raw direction:', dir);
     if (dir.lengthSq() > 0) {
       dir.normalize();
-      console.log('Direction normalized:', dir); // Debug
-    } else {
-      console.log('No direction input, dir:', dir); // Debug no input
+      console.log('Normalized direction:', dir);
     }
     const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
     const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
     const move = new THREE.Vector3();
     move.addScaledVector(forward, -dir.z);
     move.addScaledVector(right, dir.x);
-    if (move.lengthSq() > 0) {
-      move.normalize();
-      console.log('Move vector:', move); // Debug
-    }
+    console.log('Move vector:', move);
     vel.x = move.x * 10;
     vel.z = move.z * 10;
-    vel.y -= 15 * dt;
+    vel.y -= 15 * dt; // Gravity
     console.log('Velocity before jump:', vel);
-    if (onGround && keys.space) {
+    // Temporarily relax onGround condition for testing
+    if (/*onGround &&*/ keys.space && !paused) {
       vel.y = 10;
       onGround = false;
-      console.log('Jump triggered, new vel.y:', vel.y);
+      console.log('Jump triggered, vel.y:', vel.y, 'onGround:', onGround);
     }
     player.position.addScaledVector(vel, dt);
-    console.log('Player position after move:', player.position);
+    console.log('Player position:', player.position);
     if (player.position.y < 1.61) {
       player.position.y = 1.6;
       vel.y = 0;
@@ -285,11 +281,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // --- Shooting ---
+  // Shooting
   function shoot() {
     if (paused || bulletCount <= 0) return;
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(player.rotation);
-    const bullet = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshBasicMaterial({color: 0xffee88}));
+    const bullet = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffee88 }));
     bullet.position.copy(player.position).addScaledVector(dir, 0.8);
     bullet.userData = { dir, speed: 60, life: 2 };
     if (bullet instanceof THREE.Object3D) {
@@ -298,49 +294,49 @@ document.addEventListener('DOMContentLoaded', async () => {
       bulletCount--;
       document.getElementById('bulletCount').textContent = bulletCount;
       playGunshot();
-      console.log('Bullet added to scene, remaining:', bulletCount);
+      console.log('Bullet fired, remaining:', bulletCount);
     } else {
       console.error('Bullet is not an Object3D:', bullet);
     }
   }
 
-  // --- Enemies ---
+  // Enemies
   function spawnEnemy() {
-    const e = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.6, 1.2), new THREE.MeshStandardMaterial({color: 0xff6b6b}));
+    const e = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.6, 1.2), new THREE.MeshStandardMaterial({ color: 0xff6b6b }));
     const r = 20 + Math.random() * 30, ang = Math.random() * Math.PI * 2;
     e.position.set(Math.cos(ang) * r, 0.8, Math.sin(ang) * r);
     e.userData = { hp: 50, speed: 1.5 };
     if (e instanceof THREE.Object3D) {
       scene.add(e);
       enemies.push(e);
-      console.log('Enemy added to scene');
+      console.log('Enemy spawned at:', e.position);
     } else {
       console.error('Enemy is not an Object3D:', e);
     }
   }
 
-  // --- Spawn Chest ---
+  // Spawn Chest
   function spawnChest() {
-    const chest = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 1), new THREE.MeshStandardMaterial({color: 0x8B4513}));
+    const chest = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 1), new THREE.MeshStandardMaterial({ color: 0x8B4513 }));
     const r = 15 + Math.random() * 25, ang = Math.random() * Math.PI * 2;
     chest.position.set(Math.cos(ang) * r, 0.25, Math.sin(ang) * r);
     if (chest instanceof THREE.Object3D) {
       scene.add(chest);
       chests.push(chest);
-      console.log('Chest added to scene at:', chest.position);
+      console.log('Chest spawned at:', chest.position);
     } else {
       console.error('Chest is not an Object3D:', chest);
     }
   }
 
-  // --- Loop ---
+  // Animation loop
   function animate() {
     if (!paused) {
       const dt = Math.min(0.05, clock.getDelta());
-      console.log('Animating, dt:', dt, 'paused:', paused); // Debug
+      console.log('Animating, dt:', dt, 'paused:', paused);
       updateMovement(dt);
 
-      // Bullets
+      // Update bullets
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
         b.position.addScaledVector(b.userData.dir, b.userData.speed * dt);
@@ -370,7 +366,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      // Enemies
+      // Update enemies
       for (let i = enemies.length - 1; i >= 0; i--) {
         const e = enemies[i];
         const dir = new THREE.Vector3().subVectors(player.position, e.position);
@@ -387,6 +383,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         }
       }
+
+      // Spawn enemies and chests
       if (enemies.length < 5 && Math.random() < 0.01) spawnEnemy();
       if (chests.length < 3 && Math.random() < 0.005) spawnChest();
 
@@ -397,7 +395,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     animationFrameId = requestAnimationFrame(animate);
   }
 
-  // --- Init ---
+  // Initialize
   function init() {
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -424,7 +422,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.error('AmbientLight is not an Object3D:', ambLight);
     }
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({color: 0x222528}));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x222528 }));
     floor.rotation.x = -Math.PI / 2;
     if (floor instanceof THREE.Object3D) {
       scene.add(floor);
@@ -449,6 +447,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      console.log('Window resized, new aspect:', camera.aspect);
     });
   }
 });
