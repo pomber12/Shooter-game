@@ -298,15 +298,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     let minDist = Infinity;
     for (let i = 0; i < trees.length; i++) {
       const tree = trees[i];
+      const collisionRadius = tree.userData.collisionRadius || 1.0;
       const dist = newPosition.distanceTo(tree.position);
-      console.log(`Tree ${i} at:`, tree.position, 'distance:', dist);
+      console.log(`Tree ${i} at:`, tree.position, 'heightScale:', tree.userData.heightScale, 'collisionRadius:', collisionRadius, 'distance:', dist);
       if (dist < minDist) {
         minDist = dist;
         closestTree = tree;
       }
-      if (dist < 1.0) {
+      if (dist < collisionRadius) {
         canMove = false;
-        console.log('Collision detected with tree at:', tree.position, 'distance:', dist);
+        console.log('Collision detected with tree at:', tree.position, 'heightScale:', tree.userData.heightScale, 'distance:', dist);
       }
     }
 
@@ -315,7 +316,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       player.position.copy(newPosition);
       console.log('Player position updated:', player.position);
     } else {
-      console.log('Movement blocked by tree at:', closestTree.position, 'closest distance:', minDist);
+      console.log('Movement blocked by tree at:', closestTree.position, 'heightScale:', closestTree.userData.heightScale, 'closest distance:', minDist);
       player.position.y = newPosition.y; // Allow y movement
       console.log('Updated y position only:', player.position);
     }
@@ -404,21 +405,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Spawn Tree
+  // Spawn Tree with variable height
   function spawnTree() {
-    const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.3, 2, 8);
+    const heightScale = 0.8 + Math.random() * 0.7; // Random scale: 0.8 to 1.5
+    const trunkHeight = 2 * heightScale;
+    const foliageHeight = 3 * heightScale;
+    const foliageRadius = 1.5 * Math.sqrt(heightScale); // Slightly scale radius with height
+    const collisionRadius = 1.0 * Math.sqrt(heightScale); // Scale collision radius
+
+    const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.3, trunkHeight, 8);
     const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4A2F27 });
     const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-    trunk.position.y = 1;
+    trunk.position.y = trunkHeight / 2;
 
-    const foliageGeometry = new THREE.ConeGeometry(1.5, 3, 8);
+    const foliageGeometry = new THREE.ConeGeometry(foliageRadius, foliageHeight, 8);
     const foliageMaterial = new THREE.MeshStandardMaterial({ color: 0x2E8B57 });
     const foliage = new THREE.Mesh(foliageGeometry, foliageMaterial);
-    foliage.position.y = 2.5;
+    foliage.position.y = trunkHeight + foliageHeight / 2;
 
     const tree = new THREE.Group();
     tree.add(trunk);
     tree.add(foliage);
+    tree.userData = { heightScale, collisionRadius };
 
     let r, ang, dist;
     do {
@@ -431,7 +439,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (tree instanceof THREE.Object3D) {
       scene.add(tree);
       trees.push(tree);
-      console.log('Tree spawned at:', tree.position, 'distance from player:', dist);
+      console.log('Tree spawned at:', tree.position, 'heightScale:', heightScale, 'collisionRadius:', collisionRadius, 'distance from player:', dist);
     } else {
       console.error('Tree is not an Object3D:', tree);
     }
@@ -464,7 +472,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (dist > maxDistance) {
         scene.remove(t);
         trees.splice(i, 1);
-        console.log('Removed tree at:', t.position, 'distance:', dist);
+        console.log('Removed tree at:', t.position, 'heightScale:', t.userData.heightScale, 'distance:', dist);
       }
     }
     while (enemies.length < 5) spawnEnemy();
@@ -592,7 +600,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       setTimeout(() => {
         trees.forEach((tree, i) => {
           const dist = player.position.distanceTo(tree.position);
-          console.log(`Initial distance to tree ${i} at:`, tree.position, 'is:', dist);
+          console.log(`Initial distance to tree ${i} at:`, tree.position, 'heightScale:', tree.userData.heightScale, 'is:', dist);
           if (dist < 20) {
             console.warn(`Tree ${i} too close to player at distance:`, dist);
           }
