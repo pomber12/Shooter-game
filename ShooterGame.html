@@ -35,30 +35,74 @@ import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
 
 // Sound setup
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-let gunshotBuffer = null;
+let gunshotBuffer = null, enemyHitBuffer = null, enemyDeathBuffer = null;
 
 async function setupSound() {
   const sampleRate = 44100;
-  const duration = 0.1; // 100ms sound
-  const numSamples = sampleRate * duration;
-  const audioData = new Float32Array(numSamples);
 
-  for (let i = 0; i < numSamples; i++) {
+  // Gunshot sound (existing)
+  const gunshotDuration = 0.1;
+  const gunshotSamples = sampleRate * gunshotDuration;
+  const gunshotData = new Float32Array(gunshotSamples);
+  for (let i = 0; i < gunshotSamples; i++) {
     const t = i / sampleRate;
-    const envelope = Math.exp(-5 * t); // Decay envelope
-    const wave = Math.sin(2 * Math.PI * 440 * t); // 440Hz sine wave (A4 note)
-    audioData[i] = envelope * wave * 0.5; // Amplitude scaling
+    const envelope = Math.exp(-5 * t);
+    const wave = Math.sin(2 * Math.PI * 440 * t);
+    gunshotData[i] = envelope * wave * 0.5;
   }
+  const gunshotBufferTemp = audioContext.createBuffer(1, gunshotSamples, sampleRate);
+  gunshotBufferTemp.copyToChannel(gunshotData, 0);
+  gunshotBuffer = gunshotBufferTemp;
 
-  const audioBuffer = audioContext.createBuffer(1, numSamples, sampleRate);
-  audioBuffer.copyToChannel(audioData, 0);
-  gunshotBuffer = audioBuffer;
+  // Enemy hit sound (metallic clang)
+  const hitDuration = 0.15;
+  const hitSamples = sampleRate * hitDuration;
+  const hitData = new Float32Array(hitSamples);
+  for (let i = 0; i < hitSamples; i++) {
+    const t = i / sampleRate;
+    const envelope = Math.exp(-10 * t);
+    const wave = Math.sign(Math.sin(2 * Math.PI * 220 * t)); // Square wave
+    hitData[i] = envelope * wave * 0.3;
+  }
+  const enemyHitBufferTemp = audioContext.createBuffer(1, hitSamples, sampleRate);
+  enemyHitBufferTemp.copyToChannel(hitData, 0);
+  enemyHitBuffer = enemyHitBufferTemp;
+
+  // Enemy death sound (explosion noise)
+  const deathDuration = 0.2;
+  const deathSamples = sampleRate * deathDuration;
+  const deathData = new Float32Array(deathSamples);
+  for (let i = 0; i < deathSamples; i++) {
+    const t = i / sampleRate;
+    const envelope = Math.exp(-3 * t);
+    const noise = Math.random() * 2 - 1;
+    deathData[i] = envelope * noise * 0.4;
+  }
+  const enemyDeathBufferTemp = audioContext.createBuffer(1, deathSamples, sampleRate);
+  enemyDeathBufferTemp.copyToChannel(deathData, 0);
+  enemyDeathBuffer = enemyDeathBufferTemp;
 }
 
 function playGunshot() {
   if (!gunshotBuffer) return;
   const source = audioContext.createBufferSource();
   source.buffer = gunshotBuffer;
+  source.connect(audioContext.destination);
+  source.start(0);
+}
+
+function playEnemyHit() {
+  if (!enemyHitBuffer) return;
+  const source = audioContext.createBufferSource();
+  source.buffer = enemyHitBuffer;
+  source.connect(audioContext.destination);
+  source.start(0);
+}
+
+function playEnemyDeath() {
+  if (!enemyDeathBuffer) return;
+  const source = audioContext.createBufferSource();
+  source.buffer = enemyDeathBuffer;
   source.connect(audioContext.destination);
   source.start(0);
 }
@@ -270,9 +314,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           const e = enemies[j];
           if (b.position.distanceTo(e.position) < 1.0) {
             e.userData.hp -= 25;
+            playEnemyHit(); // Play hit sound
+            console.log('Enemy hit, new HP:', e.userData.hp); // Debug
             scene.remove(b);
             bullets.splice(i, 1);
             if (e.userData.hp <= 0) {
+              playEnemyDeath(); // Play death sound
+              console.log('Enemy died'); // Debug
               scene.remove(e);
               enemies.splice(j, 1);
               score += 100;
@@ -373,7 +421,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 });
 </script>
-</body>
-</html>
 </body>
 </html>
