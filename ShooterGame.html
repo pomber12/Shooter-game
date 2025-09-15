@@ -15,7 +15,10 @@
     #menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 20; }
     #menu button { padding: 15px 30px; font-size: 20px; background: #ffd86b; border: none; border-radius: 5px; cursor: pointer; }
     #menu button:hover { background: #e0b84a; }
-    #pauseMessage { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 20; font-size: 40px; color: #ffd86b; display: none; }
+    #pauseMessage { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 20; display: none; }
+    #pauseMessage span { font-size: 40px; color: #ffd86b; }
+    #pauseMessage button { margin-top: 20px; padding: 10px 20px; font-size: 18px; background: #ffd86b; border: none; border-radius: 5px; cursor: pointer; }
+    #pauseMessage button:hover { background: #e0b84a; }
   </style>
 </head>
 <body>
@@ -24,7 +27,7 @@
   <div id="menu">
     <button id="playButton">Play</button>
   </div>
-  <div id="pauseMessage">Paused</div>
+  <div id="pauseMessage"><span>Paused</span><br><button id="resumeButton">Resume</button></div>
   <div id="gameArea"></div>
 
 <script type="module">
@@ -45,9 +48,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const gameArea = document.getElementById('gameArea');
   const playButton = document.getElementById('playButton');
   const pauseMessage = document.getElementById('pauseMessage');
+  const resumeButton = document.getElementById('resumeButton');
 
-  if (!gameArea || !playButton || !pauseMessage) {
-    console.error('Game area, play button, or pause message not found');
+  if (!gameArea || !playButton || !pauseMessage || !resumeButton) {
+    console.error('Game area, play button, pause message, or resume button not found');
     return;
   }
 
@@ -63,16 +67,16 @@ document.addEventListener('DOMContentLoaded', () => {
       keys[key] = true;
       console.log(`Key down: ${key}, keys:`, keys); // Debug: Confirm key states
     }
-    if (e.keyCode === 27 && !paused) { // Esc key to pause
-      paused = true;
-      cancelAnimationFrame(animationFrameId);
-      pauseMessage.style.display = 'block';
-      console.log('Game paused');
-    } else if (e.keyCode === 27 && paused) { // Esc key to resume
-      paused = false;
-      pauseMessage.style.display = 'none';
-      animate();
-      console.log('Game resumed');
+    if (e.keyCode === 27) { // Esc key to toggle pause/resume
+      paused = !paused;
+      pauseMessage.style.display = paused ? 'block' : 'none';
+      if (paused) {
+        cancelAnimationFrame(animationFrameId);
+        console.log('Game paused');
+      } else {
+        animate();
+        console.log('Game resumed');
+      }
     }
   });
   window.addEventListener('keyup', e => {
@@ -126,6 +130,14 @@ document.addEventListener('DOMContentLoaded', () => {
     init();
     animate();
     console.log('Game started');
+  });
+
+  // --- Resume Game ---
+  resumeButton.addEventListener('click', () => {
+    paused = false;
+    pauseMessage.style.display = 'none';
+    animate();
+    console.log('Game resumed');
   });
 
   // --- Movement ---
@@ -316,9 +328,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
-</script>
-</body>
-</html>
 </script>
 </body>
 </html>
