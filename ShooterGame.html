@@ -33,18 +33,50 @@
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
 
+// Sound setup
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+let gunshotBuffer = null;
+
+async function setupSound() {
+  const sampleRate = 44100;
+  const duration = 0.1; // 100ms sound
+  const numSamples = sampleRate * duration;
+  const audioData = new Float32Array(numSamples);
+
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    const envelope = Math.exp(-5 * t); // Decay envelope
+    const wave = Math.sin(2 * Math.PI * 440 * t); // 440Hz sine wave (A4 note)
+    audioData[i] = envelope * wave * 0.5; // Amplitude scaling
+  }
+
+  const audioBuffer = audioContext.createBuffer(1, numSamples, sampleRate);
+  audioBuffer.copyToChannel(audioData, 0);
+  gunshotBuffer = audioBuffer;
+}
+
+function playGunshot() {
+  if (!gunshotBuffer) return;
+  const source = audioContext.createBufferSource();
+  source.buffer = gunshotBuffer;
+  source.connect(audioContext.destination);
+  source.start(0);
+}
+
+// Global variables
 let scene, camera, renderer, clock;
-let player, yaw=0, pitch=0;
-const bullets=[], enemies=[];
-let score=0, hp=100;
-const keys={w:false,a:false,s:false,d:false,space:false};
-let isMouseDown=false, lastX=0, lastY=0;
+let player, yaw = 0, pitch = 0;
+const bullets = [], enemies = [];
+let score = 0, hp = 100;
+const keys = { w: false, a: false, s: false, d: false, space: false };
+let isMouseDown = false, lastX = 0, lastY = 0;
 let paused = true;
 let animationFrameId = null;
 
 // Wait for DOM to load
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   console.log('Script loaded and DOM ready'); // Debug: Confirm script execution
+  await setupSound(); // Initialize sound
   const gameArea = document.getElementById('gameArea');
   const playButton = document.getElementById('playButton');
   const pauseMessage = document.getElementById('pauseMessage');
@@ -60,36 +92,40 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- Input ---
   window.addEventListener('keydown', e => {
     console.log('Key event triggered on window, key:', e.key, 'code:', e.code, 'keyCode:', e.keyCode, 'activeElement:', document.activeElement); // Debug: Detailed key info
-    e.preventDefault(); // Prevent default behavior
-    e.stopPropagation(); // Block further propagation
-    const key = e.key.toLowerCase();
-    if (key in keys) {
-      keys[key] = true;
-      console.log(`Key down: ${key}, keys:`, keys); // Debug: Confirm key states
-    }
-    if (e.keyCode === 27) { // Esc key to toggle pause/resume
-      paused = !paused;
-      pauseMessage.style.display = paused ? 'block' : 'none';
-      if (paused) {
-        cancelAnimationFrame(animationFrameId);
-        console.log('Game paused');
-      } else {
-        animate();
-        console.log('Game resumed');
+    if (e.target.tagName !== 'BUTTON') { // Prevent button focus interference
+      e.preventDefault(); // Prevent default behavior
+      e.stopPropagation(); // Block further propagation
+      const key = e.key.toLowerCase();
+      if (key in keys) {
+        keys[key] = true;
+        console.log(`Key down: ${key}, keys:`, keys); // Debug: Confirm key states
+      }
+      if (e.keyCode === 27) { // Esc key to toggle pause/resume
+        paused = !paused;
+        pauseMessage.style.display = paused ? 'block' : 'none';
+        if (paused) {
+          cancelAnimationFrame(animationFrameId);
+          console.log('Game paused');
+        } else {
+          animate();
+          console.log('Game resumed');
+        }
       }
     }
   });
   window.addEventListener('keyup', e => {
-    const key = e.key.toLowerCase();
-    if (key in keys) {
-      keys[key] = false;
-      console.log(`Key up: ${key}, keys:`, keys); // Debug: Confirm key release
+    if (e.target.tagName !== 'BUTTON') { // Prevent button focus interference
+      const key = e.key.toLowerCase();
+      if (key in keys) {
+        keys[key] = false;
+        console.log(`Key up: ${key}, keys:`, keys); // Debug: Confirm key release
+      }
     }
   });
 
   // Separate Space bar listener for direct jump
   window.addEventListener('keydown', e => {
-    if ((e.key === ' ' || e.code === 'Space' || e.keyCode === 32) && onGround && !paused) {
+    if (e.target.tagName !== 'BUTTON' && (e.key === ' ' || e.code === 'Space' || e.keyCode === 32) && onGround && !paused) {
       vel.y = 10;
       onGround = false;
       console.log('Direct jump triggered with Space, new vel.y:', vel.y);
@@ -127,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
   playButton.addEventListener('click', () => {
     paused = false;
     document.getElementById('menu').style.display = 'none';
+    gameArea.focus(); // Ensure focus on game area after play
     init();
     animate();
     console.log('Game started');
@@ -136,6 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
   resumeButton.addEventListener('click', () => {
     paused = false;
     pauseMessage.style.display = 'none';
+    gameArea.focus(); // Ensure focus on game area after resume
     animate();
     console.log('Game resumed');
   });
@@ -145,31 +183,36 @@ document.addEventListener('DOMContentLoaded', () => {
   let onGround = true;
   function updateMovement(dt) {
     if (paused) return;
+    console.log('Updating movement, paused:', paused, 'keys:', keys); // Debug: Check if function runs
     const dir = new THREE.Vector3();
     if (keys.w) dir.z -= 1;
     if (keys.s) dir.z += 1;
     if (keys.a) dir.x -= 1;
     if (keys.d) dir.x += 1;
-    if (dir.lengthSq() > 0) dir.normalize();
+    if (dir.lengthSq() > 0) {
+      dir.normalize();
+      console.log('Direction normalized:', dir); // Debug: Confirm direction
+    }
     const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
     const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
     const move = new THREE.Vector3();
     move.addScaledVector(forward, -dir.z); // Forward/backward
     move.addScaledVector(right, dir.x);    // Left/right
-    if (move.lengthSq() > 0) move.normalize();
-    console.log('Move vector:', move); // Debug: Check movement direction
+    if (move.lengthSq() > 0) {
+      move.normalize();
+      console.log('Move vector:', move); // Debug: Check movement direction
+    }
     vel.x = move.x * 10;
     vel.z = move.z * 10;
     vel.y -= 15 * dt; // Gravity
-    console.log('Before jump check - keys:', keys, 'keys.space:', keys.space, 'onGround:', onGround); // Debug: Check conditions
+    console.log('Velocity before jump check:', vel); // Debug: Check velocity
     if (onGround && keys.space) {
       vel.y = 10; // Jump velocity
       onGround = false;
       console.log('Jump triggered with Space, new vel.y:', vel.y); // Debug: Confirm jump
     }
     player.position.addScaledVector(vel, dt);
-    console.log('Velocity:', vel); // Debug: Check velocity
-    console.log('Player position:', player.position); // Debug: Check position update
+    console.log('Player position after move:', player.position); // Debug: Check position update
     if (player.position.y < 1.61) { // Slight tolerance
       player.position.y = 1.6;
       vel.y = 0;
@@ -189,6 +232,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (bullet instanceof THREE.Object3D) {
       scene.add(bullet);
       bullets.push(bullet);
+      playGunshot(); // Play sound when shooting
       console.log('Bullet added to scene'); // Debug
     } else {
       console.error('Bullet is not an Object3D:', bullet);
@@ -329,5 +373,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 </script>
+</body>
+</html>
 </body>
 </html>
