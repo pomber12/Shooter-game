@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>FPS Demo — Three.js (No Pointer Lock)</title>
+  <title>FPS Demo with Trees — Three.js (No Pointer Lock)</title>
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #0b0b0b; color: #eee; font-family: sans-serif; }
     #hud { position: absolute; left: 12px; top: 12px; z-index: 10; background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 8px; }
@@ -106,7 +106,7 @@ function playEnemyDeath() {
 // Global variables
 let scene, camera, renderer, clock;
 let player, yaw = 0, pitch = 0;
-const bullets = [], enemies = [], chests = [];
+const bullets = [], enemies = [], chests = [], trees = [];
 let score = 0, hp = 100, bulletCount = 50;
 const keys = { w: false, a: false, s: false, d: false, space: false };
 let isMouseDown = false, lastX = 0, lastY = 0;
@@ -230,7 +230,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('Movement paused, keys:', keys);
       return;
     }
-    console.log('Updating movement, keys:', keys, 'onGround:', onGround);
+    console.log('Updating movement, keys:', keys, 'onGround:', onGround, 'current position:', player.position);
     const dir = new THREE.Vector3();
     if (keys.w) dir.z -= 1;
     if (keys.s) dir.z += 1;
@@ -251,14 +251,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     vel.z = move.z * 10;
     vel.y -= 15 * dt; // Gravity
     console.log('Velocity before jump:', vel);
-    // Temporarily relax onGround condition for testing
-    if (/*onGround &&*/ keys.space && !paused) {
+    if (onGround && keys.space && !paused) {
       vel.y = 10;
       onGround = false;
       console.log('Jump triggered, vel.y:', vel.y, 'onGround:', onGround);
     }
-    player.position.addScaledVector(vel, dt);
-    console.log('Player position:', player.position);
+
+    // Calculate new position
+    const newPosition = player.position.clone().addScaledVector(vel, dt);
+    console.log('Attempted new position:', newPosition);
+
+    // Check for tree collisions
+    let canMove = true;
+    let closestTree = null;
+    let minDist = Infinity;
+    for (let i = 0; i < trees.length; i++) {
+      const tree = trees[i];
+      const dist = newPosition.distanceTo(tree.position);
+      console.log(`Tree ${i} at:`, tree.position, 'distance:', dist);
+      if (dist < minDist) {
+        minDist = dist;
+        closestTree = tree;
+      }
+      if (dist < 1.0) { // Reduced collision radius
+        canMove = false;
+        console.log('Collision detected with tree at:', tree.position, 'distance:', dist);
+      }
+    }
+
+    // Update position
+    if (canMove) {
+      player.position.copy(newPosition);
+      console.log('Player position updated:', player.position);
+    } else {
+      console.log('Movement blocked by tree at:', closestTree.position, 'closest distance:', minDist);
+      // Allow y movement for jumping/falling
+      player.position.y = newPosition.y;
+      console.log('Updated y position only:', player.position);
+    }
+
     if (player.position.y < 1.61) {
       player.position.y = 1.6;
       vel.y = 0;
@@ -326,6 +357,40 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('Chest spawned at:', chest.position);
     } else {
       console.error('Chest is not an Object3D:', chest);
+    }
+  }
+
+  // Spawn Tree
+  function spawnTree() {
+    const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.3, 2, 8);
+    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4A2F27 });
+    const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+    trunk.position.y = 1; // Center of trunk at y=1
+
+    const foliageGeometry = new THREE.ConeGeometry(1.5, 3, 8);
+    const foliageMaterial = new THREE.MeshStandardMaterial({ color: 0x2E8B57 });
+    const foliage = new THREE.Mesh(foliageGeometry, foliageMaterial);
+    foliage.position.y = 2.5; // Above trunk
+
+    const tree = new THREE.Group();
+    tree.add(trunk);
+    tree.add(foliage);
+
+    // Random position, avoiding player start (x=0, z=0)
+    let r, ang, dist;
+    do {
+      r = 15 + Math.random() * 35; // Increased minimum distance
+      ang = Math.random() * Math.PI * 2;
+      tree.position.set(Math.cos(ang) * r, 0, Math.sin(ang) * r);
+      dist = tree.position.distanceTo(new THREE.Vector3(0, 0, 0));
+    } while (dist < 15); // Minimum distance 15 units
+
+    if (tree instanceof THREE.Object3D) {
+      scene.add(tree);
+      trees.push(tree);
+      console.log('Tree spawned at:', tree.position, 'distance from origin:', dist);
+    } else {
+      console.error('Tree is not an Object3D:', tree);
     }
   }
 
@@ -435,13 +500,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     player.position.set(0, 1.6, 0);
     if (player instanceof THREE.Object3D) {
       scene.add(player);
-      console.log('Player added to scene');
+      console.log('Player added to scene at:', player.position);
+      // Log initial distances to trees
+      setTimeout(() => {
+        trees.forEach((tree, i) => {
+          const dist = player.position.distanceTo(tree.position);
+          console.log(`Initial distance to tree ${i} at:`, tree.position, 'is:', dist);
+        });
+      }, 0);
     } else {
       console.error('Player is not an Object3D:', player);
     }
 
     for (let i = 0; i < 5; i++) spawnEnemy();
     for (let i = 0; i < 2; i++) spawnChest();
+    for (let i = 0; i < 12; i++) spawnTree(); // Spawn 12 trees
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
