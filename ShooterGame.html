@@ -11,12 +11,20 @@
     #crosshair:before,#crosshair:after{content:'';position:absolute;background:#ffd86b}
     #crosshair:before{left:8px;top:0;width:2px;height:18px}
     #crosshair:after{left:0;top:8px;width:18px;height:2px}
-    #gameArea { width: 100%; height: 100%; tabindex="0"; outline: none; } /* Make focusable */
+    #gameArea { width: 100%; height: 100%; tabindex="0"; outline: none; }
+    #menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 20; }
+    #menu button { padding: 15px 30px; font-size: 20px; background: #ffd86b; border: none; border-radius: 5px; cursor: pointer; }
+    #menu button:hover { background: #e0b84a; }
+    #pauseMessage { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 20; font-size: 40px; color: #ffd86b; display: none; }
   </style>
 </head>
 <body>
   <div id="hud">Здраве: <span id="hp">100</span> · Точки: <span id="score">0</span></div>
   <div id="crosshair"></div>
+  <div id="menu">
+    <button id="playButton">Play</button>
+  </div>
+  <div id="pauseMessage">Paused</div>
   <div id="gameArea"></div>
 
 <script type="module">
@@ -28,14 +36,18 @@ const bullets=[], enemies=[];
 let score=0, hp=100;
 const keys={w:false,a:false,s:false,d:false,space:false};
 let isMouseDown=false, lastX=0, lastY=0;
+let paused = true;
+let animationFrameId = null;
 
 // Wait for DOM to load
 document.addEventListener('DOMContentLoaded', () => {
   console.log('Script loaded and DOM ready'); // Debug: Confirm script execution
   const gameArea = document.getElementById('gameArea');
+  const playButton = document.getElementById('playButton');
+  const pauseMessage = document.getElementById('pauseMessage');
 
-  if (!gameArea) {
-    console.error('Game area not found');
+  if (!gameArea || !playButton || !pauseMessage) {
+    console.error('Game area, play button, or pause message not found');
     return;
   }
 
@@ -51,6 +63,17 @@ document.addEventListener('DOMContentLoaded', () => {
       keys[key] = true;
       console.log(`Key down: ${key}, keys:`, keys); // Debug: Confirm key states
     }
+    if (e.keyCode === 27 && !paused) { // Esc key to pause
+      paused = true;
+      cancelAnimationFrame(animationFrameId);
+      pauseMessage.style.display = 'block';
+      console.log('Game paused');
+    } else if (e.keyCode === 27 && paused) { // Esc key to resume
+      paused = false;
+      pauseMessage.style.display = 'none';
+      animate();
+      console.log('Game resumed');
+    }
   });
   window.addEventListener('keyup', e => {
     const key = e.key.toLowerCase();
@@ -62,7 +85,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Separate Space bar listener for direct jump
   window.addEventListener('keydown', e => {
-    if ((e.key === ' ' || e.code === 'Space' || e.keyCode === 32) && onGround) {
+    if ((e.key === ' ' || e.code === 'Space' || e.keyCode === 32) && onGround && !paused) {
       vel.y = 10;
       onGround = false;
       console.log('Direct jump triggered with Space, new vel.y:', vel.y);
@@ -70,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   gameArea.addEventListener('mousedown', e => {
-    if (e.button === 0) {
+    if (e.button === 0 && !paused) {
       isMouseDown = true;
       lastX = e.clientX;
       lastY = e.clientY;
@@ -84,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.addEventListener('mouseup', () => { isMouseDown = false; });
   window.addEventListener('mousemove', e => {
-    if (isMouseDown) { // Require left button hold for looking
+    if (isMouseDown && !paused) { // Require left button hold for looking
       const dx = e.clientX - lastX;
       const dy = e.clientY - lastY;
       yaw -= dx * 0.002;
@@ -96,10 +119,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // --- Start Game ---
+  playButton.addEventListener('click', () => {
+    paused = false;
+    document.getElementById('menu').style.display = 'none';
+    init();
+    animate();
+    console.log('Game started');
+  });
+
   // --- Movement ---
   const vel = new THREE.Vector3();
   let onGround = true;
   function updateMovement(dt) {
+    if (paused) return;
     const dir = new THREE.Vector3();
     if (keys.w) dir.z -= 1;
     if (keys.s) dir.z += 1;
@@ -136,6 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Shooting ---
   function shoot() {
+    if (paused) return;
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(player.rotation);
     const bullet = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshBasicMaterial({color: 0xffee88}));
     bullet.position.copy(player.position).addScaledVector(dir, 0.8);
@@ -166,59 +200,61 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Loop ---
   function animate() {
-    const dt = Math.min(0.05, clock.getDelta());
-    console.log('Frame dt:', dt); // Debug: Check delta time
-    updateMovement(dt);
+    if (!paused) {
+      const dt = Math.min(0.05, clock.getDelta());
+      console.log('Frame dt:', dt); // Debug: Check delta time
+      updateMovement(dt);
 
-    // Bullets
-    for (let i = bullets.length - 1; i >= 0; i--) {
-      const b = bullets[i];
-      b.position.addScaledVector(b.userData.dir, b.userData.speed * dt);
-      b.userData.life -= dt;
-      for (let j = enemies.length - 1; j >= 0; j--) {
-        const e = enemies[j];
-        if (b.position.distanceTo(e.position) < 1.0) {
-          e.userData.hp -= 25;
+      // Bullets
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.position.addScaledVector(b.userData.dir, b.userData.speed * dt);
+        b.userData.life -= dt;
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          const e = enemies[j];
+          if (b.position.distanceTo(e.position) < 1.0) {
+            e.userData.hp -= 25;
+            scene.remove(b);
+            bullets.splice(i, 1);
+            if (e.userData.hp <= 0) {
+              scene.remove(e);
+              enemies.splice(j, 1);
+              score += 100;
+              document.getElementById('score').textContent = score;
+            }
+            break;
+          }
+        }
+        if (b && b.userData.life <= 0) {
           scene.remove(b);
           bullets.splice(i, 1);
-          if (e.userData.hp <= 0) {
-            scene.remove(e);
-            enemies.splice(j, 1);
-            score += 100;
-            document.getElementById('score').textContent = score;
+        }
+      }
+
+      // Enemies
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        const dir = new THREE.Vector3().subVectors(player.position, e.position);
+        const dist = dir.length();
+        dir.normalize();
+        e.position.addScaledVector(dir, e.userData.speed * dt);
+        if (dist < 1.2) {
+          hp -= 5;
+          document.getElementById('hp').textContent = Math.max(0, hp);
+          if (hp <= 0) {
+            alert('Game Over! Score ' + score);
+            location.reload();
+            return;
           }
-          break;
         }
       }
-      if (b && b.userData.life <= 0) {
-        scene.remove(b);
-        bullets.splice(i, 1);
-      }
-    }
+      if (enemies.length < 5 && Math.random() < 0.01) spawnEnemy();
 
-    // Enemies
-    for (let i = enemies.length - 1; i >= 0; i--) {
-      const e = enemies[i];
-      const dir = new THREE.Vector3().subVectors(player.position, e.position);
-      const dist = dir.length();
-      dir.normalize();
-      e.position.addScaledVector(dir, e.userData.speed * dt);
-      if (dist < 1.2) {
-        hp -= 5;
-        document.getElementById('hp').textContent = Math.max(0, hp);
-        if (hp <= 0) {
-          alert('Game Over! Score ' + score);
-          location.reload();
-          return;
-        }
-      }
+      camera.position.copy(player.position);
+      camera.rotation.copy(player.rotation);
+      renderer.render(scene, camera);
     }
-    if (enemies.length < 5 && Math.random() < 0.01) spawnEnemy();
-
-    camera.position.copy(player.position);
-    camera.rotation.copy(player.rotation);
-    renderer.render(scene, camera);
-    requestAnimationFrame(animate);
+    animationFrameId = requestAnimationFrame(animate);
   }
 
   // --- Init ---
@@ -278,11 +314,11 @@ document.addEventListener('DOMContentLoaded', () => {
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
-
-    animate();
   }
-  init();
 });
+</script>
+</body>
+</html>
 </script>
 </body>
 </html>
