@@ -115,7 +115,7 @@ let animationFrameId = null;
 const vel = new THREE.Vector3();
 let onGround = true;
 
-// Grass texture and shader
+// Grass texture
 let grassTexture = null;
 const textureLoader = new THREE.TextureLoader();
 textureLoader.load(
@@ -125,55 +125,24 @@ textureLoader.load(
     grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
     grassTexture.repeat.set(10, 10);
     console.log('Grass texture loaded successfully');
-    updateFloorMaterial();
+    updateFloorMaterials();
   },
   undefined,
   (err) => {
     console.error('Failed to load grass texture:', err.message);
-    updateFloorMaterial();
+    updateFloorMaterials();
   }
 );
 
-function updateFloorMaterial() {
-  const vertexShader = `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `;
-  const fragmentShader = `
-    uniform sampler2D grassTexture;
-    uniform vec3 playerPos;
-    uniform bool useTexture;
-    varying vec2 vUv;
-    void main() {
-      vec3 color;
-      if (useTexture) {
-        vec4 tex = texture2D(grassTexture, vUv);
-        vec3 pos = vec3(vUv.x * 100.0 - 50.0, 0.0, vUv.y * 100.0 - 50.0);
-        float dist = distance(pos.xz, playerPos.xz);
-        float bendFactor = clamp(1.0 - dist / 2.0, 0.0, 1.0);
-        color = tex.rgb * (1.0 - bendFactor * 0.3);
-      } else {
-        color = vec3(0.18, 0.55, 0.34); // Fallback green (0x2E8B57)
-      }
-      gl_FragColor = vec4(color, 1.0);
-    }
-  `;
-  const material = new THREE.ShaderMaterial({
-    uniforms: {
-      grassTexture: { value: grassTexture || new THREE.Texture() },
-      playerPos: { value: new THREE.Vector3(0, 1.6, 0) },
-      useTexture: { value: !!grassTexture }
-    },
-    vertexShader,
-    fragmentShader
-  });
+function updateFloorMaterials() {
+  const material = grassTexture
+    ? new THREE.MeshStandardMaterial({ map: grassTexture })
+    : new THREE.MeshStandardMaterial({ color: 0x2E8B57 });
   floorTiles.forEach(tile => {
     tile.material = material;
+    console.log('Updated material for tile at:', tile.position, 'with:', grassTexture ? 'texture' : 'fallback green');
   });
-  console.log('Floor material updated with', grassTexture ? 'texture' : 'fallback green');
+  console.log('Floor materials updated with', grassTexture ? 'texture' : 'fallback green');
 }
 
 // Wait for DOM to load
@@ -367,8 +336,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const dx = (i % 3 - 1) * tileSize;
       const dz = (Math.floor(i / 3) - 1) * tileSize;
       tile.position.set(centerX + dx, 0, centerZ + dz);
-      tile.material.uniforms.playerPos.value.copy(player.position);
-      tile.material.uniforms.useTexture.value = !!grassTexture;
+      console.log(`Tile ${i} updated at:`, tile.position);
     });
     console.log('Floor tiles updated, center:', new THREE.Vector3(centerX, 0, centerZ));
 
@@ -390,7 +358,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   function shoot() {
     if (paused || bulletCount <= 0) return;
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(player.rotation);
-    const bullet = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffee88 }));
+    const bullet = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshStandardMaterial({ color: 0xffee88 }));
     bullet.position.copy(player.position).addScaledVector(dir, 0.8);
     bullet.userData = { dir, speed: 60, life: 2 };
     if (bullet instanceof THREE.Object3D) {
@@ -454,7 +422,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let r, ang, dist;
     do {
-      r = 20 + Math.random() * 30; // Increased min distance to 20
+      r = 20 + Math.random() * 30;
       ang = Math.random() * Math.PI * 2;
       tree.position.set(player.position.x + Math.cos(ang) * r, 0, player.position.z + Math.sin(ang) * r);
       dist = tree.position.distanceTo(player.position);
@@ -614,7 +582,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error(`Floor tile ${i} is not an Object3D:`, tile);
       }
     }
-    updateFloorMaterial();
+    updateFloorMaterials();
 
     player = new THREE.Object3D();
     player.position.set(0, 1.6, 0);
