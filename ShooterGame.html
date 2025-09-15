@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>FPS Demo with Infinite Grassy Map — Three.js</title>
   <style>
-    html, body { height: 100%; margin: 0; overflow: hidden; background: #0b0b0b; color: #eee; font-family: sans-serif; }
+    html, body { height: 100%; margin: 0; overflow: hidden; background: #87CEEB; color: #eee; font-family: sans-serif; }
     #hud { position: absolute; left: 12px; top: 12px; z-index: 10; background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 8px; }
     #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 18px; height: 18px; pointer-events: none; z-index: 9; }
     #crosshair:before, #crosshair:after { content: ''; position: absolute; background: #ffd86b; }
@@ -550,23 +550,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
     gameArea.appendChild(renderer.domElement);
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b0b0b);
+    scene.background = new THREE.Color(0x87CEEB); // Blue sky
+    console.log('Sky color set to blue (0x87CEEB)');
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
     clock = new THREE.Clock();
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.7); // Slightly brighter
     dirLight.position.set(5, 10, 2);
     if (dirLight instanceof THREE.Object3D) {
       scene.add(dirLight);
-      console.log('DirectionalLight added to scene');
+      console.log('DirectionalLight added to scene, intensity: 0.7');
     } else {
       console.error('DirectionalLight is not an Object3D:', dirLight);
     }
 
-    const ambLight = new THREE.AmbientLight(0xffffff, 0.3);
+    const ambLight = new THREE.AmbientLight(0xffffff, 0.4); // Slightly brighter
     if (ambLight instanceof THREE.Object3D) {
       scene.add(ambLight);
-      console.log('AmbientLight added to scene');
+      console.log('AmbientLight added to scene, intensity: 0.4');
     } else {
       console.error('AmbientLight is not an Object3D:', ambLight);
     }
