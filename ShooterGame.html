@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="bg">
 <head>
   <meta charset="utf-8" />
@@ -7,7 +7,7 @@
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #87CEEB; color: #eee; font-family: sans-serif; }
     #hud { position: absolute; left: 12px; top: 12px; z-index: 10; background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 8px; }
-    #debugKeys { position: absolute; left: 12px; top: 60px; z-index: 10; background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 8px; }
+    #debugKeys { position: absolute; left: 12px; top: 60px; z-index: 10; background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 8px; max-height: 300px; overflow-y: auto; }
     #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 18px; height: 18px; pointer-events: none; z-index: 9; animation: blink 1s infinite; }
     #crosshair.locked { animation: none; }
     #crosshair:before, #crosshair:after { content: ''; position: absolute; background: #ffd86b; }
@@ -50,6 +50,26 @@ let animationFrameId = null;
 const vel = new THREE.Vector3();
 let onGround = true;
 let lastLockAttempt = 0;
+let lockRetryCount = 0;
+const MAX_TOTAL_OBJECTS = 30;
+const MAX_BULLETS = 20;
+const MAX_LOCK_RETRIES = 3;
+const MAX_ERRORS = 200;
+let errors = [];
+
+function logError(message) {
+  const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+  errors.push(`[${timestamp}] ${message}`);
+  if (errors.length > MAX_ERRORS) {
+    errors.shift(); // Remove oldest error if over limit
+  }
+  updateDebugKeys();
+}
+
+function updateDebugKeys() {
+  const debugKeys = document.getElementById('debugKeys');
+  debugKeys.textContent = `Keys: W: ${keys.w} A: ${keys.a} S: ${keys.s} D: ${keys.d} Space: ${keys.space}\nErrors:\n${errors.join('\n')}`;
+}
 
 // Sound setup
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -130,12 +150,11 @@ textureLoader.load(
     grassTexture = texture;
     grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
     grassTexture.repeat.set(10, 10);
-    console.log('Grass texture loaded successfully');
     updateFloorMaterials();
   },
   undefined,
   (err) => {
-    console.error('Failed to load grass texture:', err.message);
+    logError('Failed to load grass texture: ' + err.message);
     updateFloorMaterials();
   }
 );
@@ -146,14 +165,11 @@ function updateFloorMaterials() {
     : new THREE.MeshStandardMaterial({ color: 0x2E8B57 });
   floorTiles.forEach(tile => {
     tile.material = material;
-    console.log('Updated material for tile at:', tile.position.clone(), 'with:', grassTexture ? 'texture' : 'fallback green');
   });
-  console.log('Floor materials updated with', grassTexture ? 'texture' : 'fallback green');
 }
 
 // Wait for DOM to load
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('Script loaded and DOM ready');
   await setupSound();
   const gameArea = document.getElementById('gameArea');
   const playButton = document.getElementById('playButton');
@@ -164,51 +180,60 @@ document.addEventListener('DOMContentLoaded', async () => {
   const debugKeys = document.getElementById('debugKeys');
 
   if (!gameArea || !playButton || !pauseMessage || !resumeButton || !pointerLockMessage || !crosshair || !debugKeys) {
-    console.error('Required DOM elements not found');
+    logError('Required DOM elements not found');
     return;
   }
 
-  console.log('Event listeners attaching');
+  // Check if frame is sandboxed
+  const isSandboxed = window.frameElement && window.frameElement.sandbox;
+  if (isSandboxed && !window.frameElement.sandbox.contains('allow-pointer-lock')) {
+    logError('Pointer lock blocked: Frame is sandboxed without allow-pointer-lock permission.');
+    pointerLockMessage.textContent = 'Pointer lock blocked due to sandboxing. Run in a non-sandboxed context or add allow-pointer-lock.';
+    pointerLockMessage.style.display = 'block';
+  }
 
-  // Request pointer lock and focus
   gameArea.addEventListener('click', () => {
-    if (!paused) {
-      gameArea.requestPointerLock().catch(err => {
-        console.error('Pointer lock request failed:', err, new Date().toISOString());
-        pointerLockMessage.style.display = 'block';
-      });
+    if (!paused && !document.pointerLockElement && lockRetryCount < MAX_LOCK_RETRIES && !isSandboxed) {
       gameArea.focus();
-      console.log('Game area clicked, requesting pointer lock, activeElement:', document.activeElement, new Date().toISOString());
+      if (document.hasFocus()) {
+        setTimeout(() => {
+          gameArea.requestPointerLock().catch(err => {
+            logError('Pointer lock request failed on click: ' + err.message);
+            pointerLockMessage.style.display = 'block';
+            lockRetryCount++;
+          });
+        }, 300); // Increased delay for focus
+      } else {
+        logError('Game area not focused, click again to retry.');
+        pointerLockMessage.style.display = 'block';
+      }
     }
   });
 
-  // Input listeners
   window.addEventListener('keydown', e => {
-    console.log('Key event down:', e.key, e.code, e.keyCode, 'activeElement:', document.activeElement, new Date().toISOString());
     if (e.target.tagName !== 'BUTTON') {
       const key = e.code === 'Space' ? 'space' : e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'space'].includes(key)) {
         e.preventDefault();
         keys[key] = true;
-        console.log(`Key down: ${key}, keys:`, { ...keys }, new Date().toISOString());
         updateDebugKeys();
       }
-      if (e.keyCode === 27) { // Esc key
+      if (e.keyCode === 27) {
         paused = !paused;
         pauseMessage.style.display = paused ? 'block' : 'none';
         pointerLockMessage.style.display = 'none';
         if (paused) {
           cancelAnimationFrame(animationFrameId);
           document.exitPointerLock();
-          console.log('Game paused, pointer lock exited', new Date().toISOString());
         } else {
-          gameArea.requestPointerLock().catch(err => {
-            console.error('Pointer lock request failed on resume:', err, new Date().toISOString());
-            pointerLockMessage.style.display = 'block';
-          });
+          if (!isSandboxed) {
+            gameArea.requestPointerLock().catch(err => {
+              logError('Pointer lock request failed on resume: ' + err.message);
+              pointerLockMessage.style.display = 'block';
+            });
+          }
           gameArea.focus();
           animate();
-          console.log('Game resumed, pointer lock requested', new Date().toISOString());
         }
       }
     }
@@ -219,7 +244,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const key = e.code === 'Space' ? 'space' : e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'space'].includes(key)) {
         keys[key] = false;
-        console.log(`Key up: ${key}, keys:`, { ...keys }, new Date().toISOString());
         updateDebugKeys();
       }
     }
@@ -229,23 +253,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.button === 0 && !paused && bulletCount > 0) {
       gameArea.focus();
       shoot();
-      console.log('Mouse down, shot fired, bulletCount:', bulletCount, 'activeElement:', document.activeElement, new Date().toISOString());
     }
   });
 
-  gameArea.addEventListener('focus', () => {
-    console.log('Game area focused, activeElement:', document.activeElement, new Date().toISOString());
-  });
-
-  // Pointer lock handling
   document.addEventListener('pointerlockchange', () => {
     const isLocked = document.pointerLockElement === gameArea;
+    console.log('Pointer lock state:', isLocked ? 'Locked' : 'Unlocked');
     if (isLocked) {
-      console.log('Pointer locked', new Date().toISOString());
       pointerLockMessage.style.display = 'none';
       crosshair.classList.add('locked');
+      lockRetryCount = 0; // Reset on success
     } else {
-      console.log('Pointer unlocked', new Date().toISOString());
       if (!paused) {
         pointerLockMessage.style.display = 'block';
         crosshair.classList.remove('locked');
@@ -254,98 +272,89 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.addEventListener('mousemove', e => {
-    console.log('Mouse move detected, movementX:', e.movementX, 'movementY:', e.movementY, 'pointerLocked:', document.pointerLockElement === gameArea, new Date().toISOString());
-    if (document.pointerLockElement === gameArea || !paused) {
+    if (document.pointerLockElement === gameArea) {
       const sensitivity = 0.001;
       yaw -= e.movementX * sensitivity;
       pitch -= e.movementY * sensitivity;
       pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
-      console.log('Mouse move applied, yaw:', yaw, 'pitch:', pitch, new Date().toISOString());
+      console.log('Mouse moved, yaw:', yaw.toFixed(2), 'pitch:', pitch.toFixed(2));
     }
   });
 
-  // Start game
   playButton.addEventListener('click', () => {
     paused = false;
     document.getElementById('menu').style.display = 'none';
     pointerLockMessage.style.display = 'block';
-    gameArea.requestPointerLock().catch(err => {
-      console.error('Pointer lock request failed on play:', err, new Date().toISOString());
-      pointerLockMessage.style.display = 'block';
-    });
     gameArea.focus();
-    console.log('Play button clicked, paused:', paused, 'gameArea focused:', document.activeElement === gameArea, new Date().toISOString());
+    if (document.hasFocus()) {
+      gameArea.click(); // Trigger initial interaction
+      if (!isSandboxed) {
+        setTimeout(() => {
+          gameArea.requestPointerLock().catch(err => {
+            logError('Pointer lock request failed on play: ' + err.message);
+            pointerLockMessage.style.display = 'block';
+          });
+        }, 300); // Increased delay
+      }
+    } else {
+      logError('Game area not focused, click again to retry.');
+    }
     init();
     animate();
   });
 
-  // Resume game
   resumeButton.addEventListener('click', () => {
     paused = false;
     pauseMessage.style.display = 'none';
     pointerLockMessage.style.display = 'block';
-    gameArea.requestPointerLock().catch(err => {
-      console.error('Pointer lock request failed on resume:', err, new Date().toISOString());
-      pointerLockMessage.style.display = 'block';
-    });
     gameArea.focus();
-    console.log('Resume button clicked, paused:', paused, 'gameArea focused:', document.activeElement === gameArea, new Date().toISOString());
+    if (document.hasFocus() && !isSandboxed) {
+      gameArea.requestPointerLock().catch(err => {
+        logError('Pointer lock request failed on resume: ' + err.message);
+        pointerLockMessage.style.display = 'block';
+      });
+    } else {
+      logError('Game area not focused or sandboxed, click again to retry.');
+    }
     animate();
   });
 
-  // Update debug keys display
-  function updateDebugKeys() {
-    debugKeys.textContent = `W: ${keys.w} A: ${keys.a} S: ${keys.s} D: ${keys.d} Space: ${keys.space}`;
-  }
-
-  // Movement
   function updateMovement(dt) {
-    if (paused) {
-      console.log('Movement paused, keys:', { ...keys }, new Date().toISOString());
-      return;
-    }
-    console.log('Updating movement, keys:', { ...keys }, 'onGround:', onGround, 'current position:', player.position.clone(), new Date().toISOString());
+    if (paused) return;
     const dir = new THREE.Vector3();
     if (keys.w) dir.z -= 1;
     if (keys.s) dir.z += 1;
     if (keys.a) dir.x -= 1;
     if (keys.d) dir.x += 1;
-    console.log('Raw direction:', dir.clone(), new Date().toISOString());
     if (dir.lengthSq() > 0) {
       dir.normalize();
-      console.log('Normalized direction:', dir.clone(), new Date().toISOString());
+      const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+      const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+      const move = new THREE.Vector3();
+      move.addScaledVector(forward, -dir.z);
+      move.addScaledVector(right, dir.x);
+      vel.x = move.x * 10;
+      vel.z = move.z * 10;
+      console.log('Movement applied, vel:', vel.x.toFixed(2), vel.z.toFixed(2));
+    } else if (!keys.w && !keys.s && !keys.a && !keys.d) {
+      vel.x *= 0.9; // Gradual stop with friction
+      vel.z *= 0.9;
+      if (Math.abs(vel.x) < 0.1) vel.x = 0;
+      if (Math.abs(vel.z) < 0.1) vel.z = 0;
     }
-    const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    const move = new THREE.Vector3();
-    move.addScaledVector(forward, -dir.z);
-    move.addScaledVector(right, dir.x);
-    console.log('Move vector:', move.clone(), new Date().toISOString());
-    vel.x = move.x * 10;
-    vel.z = move.z * 10;
-    vel.y -= 15 * dt; // Gravity
-    console.log('Velocity before jump:', vel.clone(), new Date().toISOString());
+    vel.y -= 15 * dt;
     if (onGround && keys.space) {
       vel.y = 10;
       onGround = false;
-      console.log('Jump triggered, vel.y:', vel.y, 'onGround:', onGround, new Date().toISOString());
     }
-
-    // Simplified position update (temporary, no collisions)
     const newPosition = player.position.clone().addScaledVector(vel, dt);
-    console.log('New position calculated:', newPosition.clone(), new Date().toISOString());
     player.position.copy(newPosition);
-    console.log('Player position updated:', player.position.clone(), new Date().toISOString());
-
     if (player.position.y < 1.61) {
       player.position.y = 1.6;
       vel.y = 0;
       onGround = true;
-      console.log('Landed, onGround:', onGround, new Date().toISOString());
     }
     player.rotation.set(pitch, yaw, 0);
-
-    // Update floor tiles
     const tileSize = 100;
     const centerX = Math.floor(player.position.x / tileSize) * tileSize;
     const centerZ = Math.floor(player.position.z / tileSize) * tileSize;
@@ -353,27 +362,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       const dx = (i % 3 - 1) * tileSize;
       const dz = (Math.floor(i / 3) - 1) * tileSize;
       tile.position.set(centerX + dx, 0, centerZ + dz);
-      console.log(`Tile ${i} updated at:`, tile.position.clone(), new Date().toISOString());
     });
-    console.log('Floor tiles updated, center:', new THREE.Vector3(centerX, 0, centerZ), new Date().toISOString());
-
-    // Check chest collision (kept for testing)
     for (let i = chests.length - 1; i >= 0; i--) {
       const chest = chests[i];
       const dist = player.position.distanceTo(chest.position);
       if (dist < 1.5) {
         bulletCount = Math.min(50, bulletCount + 20);
         document.getElementById('bulletCount').textContent = bulletCount;
-        console.log('Chest collected, new bullet count:', bulletCount, new Date().toISOString());
         scene.remove(chest);
         chests.splice(i, 1);
       }
     }
   }
 
-  // Shooting
   function shoot() {
     if (paused || bulletCount <= 0) return;
+    if (bullets.length >= MAX_BULLETS) {
+      const oldestBullet = bullets.shift();
+      scene.remove(oldestBullet);
+    }
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(player.rotation);
     const bullet = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshStandardMaterial({ color: 0xffee88 }));
     bullet.position.copy(player.position).addScaledVector(dir, 0.8);
@@ -384,13 +391,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       bulletCount--;
       document.getElementById('bulletCount').textContent = bulletCount;
       playGunshot();
-      console.log('Bullet fired, remaining:', bulletCount, new Date().toISOString());
-    } else {
-      console.error('Bullet is not an Object3D:', bullet, new Date().toISOString());
     }
   }
 
-  // Enemies
   function spawnEnemy() {
     const e = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.6, 1.2), new THREE.MeshStandardMaterial({ color: 0xff6b6b }));
     const r = 20 + Math.random() * 30;
@@ -400,13 +403,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e instanceof THREE.Object3D) {
       scene.add(e);
       enemies.push(e);
-      console.log('Enemy spawned at:', e.position.clone(), 'relative to player:', player.position.clone(), new Date().toISOString());
-    } else {
-      console.error('Enemy is not an Object3D:', e, new Date().toISOString());
     }
   }
 
-  // Spawn Chest
   function spawnChest() {
     const chest = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 1), new THREE.MeshStandardMaterial({ color: 0x8B4513 }));
     const r = 15 + Math.random() * 25;
@@ -415,13 +414,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (chest instanceof THREE.Object3D) {
       scene.add(chest);
       chests.push(chest);
-      console.log('Chest spawned at:', chest.position.clone(), 'relative to player:', player.position.clone(), new Date().toISOString());
-    } else {
-      console.error('Chest is not an Object3D:', chest, new Date().toISOString());
     }
   }
 
-  // Spawn Tree
   function spawnTree() {
     const heightScale = 0.8 + Math.random() * 0.7;
     const trunkHeight = 2 * heightScale;
@@ -455,22 +450,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (tree instanceof THREE.Object3D) {
       scene.add(tree);
       trees.push(tree);
-      console.log('Tree spawned at:', tree.position.clone(), 'heightScale:', heightScale, 'collisionRadius:', collisionRadius, 'distance from player:', dist, new Date().toISOString());
-    } else {
-      console.error('Tree is not an Object3D:', tree, new Date().toISOString());
     }
   }
 
-  // Manage objects
   function manageObjects() {
-    const maxDistance = 60;
+    const maxDistance = 80;
+    const totalObjects = enemies.length + chests.length + trees.length;
+    if (totalObjects >= MAX_TOTAL_OBJECTS) return;
+
     for (let i = enemies.length - 1; i >= 0; i--) {
       const e = enemies[i];
       const dist = player.position.distanceTo(e.position);
       if (dist > maxDistance) {
         scene.remove(e);
         enemies.splice(i, 1);
-        console.log('Removed enemy at:', e.position.clone(), 'distance:', dist, new Date().toISOString());
       }
     }
     for (let i = chests.length - 1; i >= 0; i--) {
@@ -479,7 +472,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (dist > maxDistance) {
         scene.remove(c);
         chests.splice(i, 1);
-        console.log('Removed chest at:', c.position.clone(), 'distance:', dist, new Date().toISOString());
       }
     }
     for (let i = trees.length - 1; i >= 0; i--) {
@@ -488,25 +480,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (dist > maxDistance) {
         scene.remove(t);
         trees.splice(i, 1);
-        console.log('Removed tree at:', t.position.clone(), 'heightScale:', t.userData.heightScale, 'distance:', dist, new Date().toISOString());
       }
     }
-    while (enemies.length < 5) spawnEnemy();
-    while (chests.length < 2) spawnChest();
-    while (trees.length < 12) spawnTree();
-    console.log('Object counts - Enemies:', enemies.length, 'Chests:', chests.length, 'Trees:', trees.length, new Date().toISOString());
+    while (enemies.length < 5 && totalObjects < MAX_TOTAL_OBJECTS) spawnEnemy();
+    while (chests.length < 2 && totalObjects < MAX_TOTAL_OBJECTS) spawnChest();
+    while (trees.length < 12 && totalObjects < MAX_TOTAL_OBJECTS) spawnTree();
   }
 
-  // Animation loop
   function animate() {
     if (!paused) {
       const dt = Math.min(0.05, clock.getDelta());
-      console.log('Animating, dt:', dt, 'paused:', paused, 'player position:', player.position.clone(), new Date().toISOString());
-      gameArea.focus(); // Ensure focus
+      gameArea.focus();
       updateMovement(dt);
       manageObjects();
 
-      // Update bullets
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
         b.position.addScaledVector(b.userData.dir, b.userData.speed * dt);
@@ -516,12 +503,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (b.position.distanceTo(e.position) < 1.0) {
             e.userData.hp -= 25;
             playEnemyHit();
-            console.log('Enemy hit, new HP:', e.userData.hp, new Date().toISOString());
             scene.remove(b);
             bullets.splice(i, 1);
             if (e.userData.hp <= 0) {
               playEnemyDeath();
-              console.log('Enemy died', new Date().toISOString());
               scene.remove(e);
               enemies.splice(j, 1);
               score += 100;
@@ -536,7 +521,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }
 
-      // Update enemies
       for (let i = enemies.length - 1; i >= 0; i--) {
         const e = enemies[i];
         const dir = new THREE.Vector3().subVectors(player.position, e.position);
@@ -547,20 +531,20 @@ document.addEventListener('DOMContentLoaded', async () => {
           hp -= 5;
           document.getElementById('hp').textContent = Math.max(0, hp);
           if (hp <= 0) {
-            alert('Game Over! Score ' + score);
+            logError('Game Over! Score ' + score);
             location.reload();
             return;
           }
         }
       }
 
-      // Check and request pointer lock if not active
-      if (!document.pointerLockElement && Date.now() - lastLockAttempt > 1000) {
+      // Remove auto-retry if sandboxed
+      if (!isSandboxed && !document.pointerLockElement && Date.now() - lastLockAttempt > 2000 && lockRetryCount < MAX_LOCK_RETRIES) {
         gameArea.requestPointerLock().catch(err => {
-          console.error('Auto pointer lock failed:', err, new Date().toISOString());
+          logError('Auto pointer lock failed: ' + err.message);
+          lockRetryCount++;
+          lastLockAttempt = Date.now();
         });
-        lastLockAttempt = Date.now();
-        console.log('Attempting to re-lock pointer', new Date().toISOString());
       }
 
       camera.position.copy(player.position);
@@ -570,35 +554,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     animationFrameId = requestAnimationFrame(animate);
   }
 
-  // Initialize
   function init() {
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     gameArea.appendChild(renderer.domElement);
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB);
-    console.log('Sky color set to blue (0x87CEEB)', new Date().toISOString());
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
     clock = new THREE.Clock();
 
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
     dirLight.position.set(5, 10, 2);
-    if (dirLight instanceof THREE.Object3D) {
-      scene.add(dirLight);
-      console.log('DirectionalLight added to scene, intensity: 0.7', new Date().toISOString());
-    } else {
-      console.error('DirectionalLight is not an Object3D:', dirLight, new Date().toISOString());
-    }
+    scene.add(dirLight);
 
     const ambLight = new THREE.AmbientLight(0xffffff, 0.4);
-    if (ambLight instanceof THREE.Object3D) {
-      scene.add(ambLight);
-      console.log('AmbientLight added to scene, intensity: 0.4', new Date().toISOString());
-    } else {
-      console.error('AmbientLight is not an Object3D:', ambLight, new Date().toISOString());
-    }
+    scene.add(ambLight);
 
-    // Create 3x3 floor tiles
     const tileSize = 100;
     for (let i = 0; i < 9; i++) {
       const dx = (i % 3 - 1) * tileSize;
@@ -609,33 +580,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       );
       tile.rotation.x = -Math.PI / 2;
       tile.position.set(dx, 0, dz);
-      if (tile instanceof THREE.Object3D) {
-        scene.add(tile);
-        floorTiles.push(tile);
-        console.log(`Floor tile ${i} added at:`, tile.position.clone(), new Date().toISOString());
-      } else {
-        console.error(`Floor tile ${i} is not an Object3D:`, tile, new Date().toISOString());
-      }
+      scene.add(tile);
+      floorTiles.push(tile);
     }
     updateFloorMaterials();
 
     player = new THREE.Object3D();
     player.position.set(0, 1.6, 0);
-    if (player instanceof THREE.Object3D) {
-      scene.add(player);
-      console.log('Player added to scene at:', player.position.clone(), new Date().toISOString());
-      setTimeout(() => {
-        trees.forEach((tree, i) => {
-          const dist = player.position.distanceTo(tree.position);
-          console.log(`Initial distance to tree ${i} at:`, tree.position.clone(), 'heightScale:', tree.userData.heightScale, 'is:', dist, new Date().toISOString());
-          if (dist < 25) {
-            console.warn(`Tree ${i} too close to player at distance:`, dist, new Date().toISOString());
-          }
-        });
-      }, 0);
-    } else {
-      console.error('Player is not an Object3D:', player, new Date().toISOString());
-    }
+    scene.add(player);
 
     for (let i = 0; i < 5; i++) spawnEnemy();
     for (let i = 0; i < 2; i++) spawnChest();
@@ -645,13 +597,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
-      console.log('Window resized, new aspect:', camera.aspect, new Date().toISOString());
     });
   }
-});
-</script>
-</body>
-</html>
 });
 </script>
 </body>
