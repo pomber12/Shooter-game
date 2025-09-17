@@ -44,7 +44,7 @@ let scene, camera, renderer, clock, floorTiles = [];
 let player, yaw = 0, pitch = 0, hands;
 const bullets = [], enemies = [], chests = [], trees = [], flowers = [];
 let score = 0, hp = 100, bulletCount = 50, fuel = 100;
-const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false, Space: false, KeyE: false, ShiftLeft: false, ShiftRight: false };
+const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false, Space: false, KeyE: false, ShiftLeft: false, ShiftRight: false, KeyQ: false };
 let paused = true;
 let animationFrameId = null;
 const vel = new THREE.Vector3();
@@ -57,6 +57,13 @@ const MAX_LOCK_RETRIES = 3;
 const MAX_ERRORS = 200;
 let errors = [];
 let jetpackActive = false;
+let hookActive = false;
+let hookMesh = null;
+let hookLine = null;
+let hookTarget = new THREE.Vector3();
+const raycaster = new THREE.Raycaster();
+const HOOK_MAX_DISTANCE = 50;
+const HOOK_PULL_SPEED = 20;
 
 function logError(message) {
   const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -69,7 +76,7 @@ function logError(message) {
 
 function updateDebugKeys() {
   const debugKeys = document.getElementById('debugKeys');
-  debugKeys.textContent = `Keys: W: ${keys.KeyW} A: ${keys.KeyA} S: ${keys.KeyS} D: ${keys.KeyD} Space: ${keys.Space} E: ${keys.KeyE} Shift: ${keys.ShiftLeft || keys.ShiftRight}\nErrors:\n${errors.join('\n')}`;
+  debugKeys.textContent = `Keys: W: ${keys.KeyW} A: ${keys.KeyA} S: ${keys.KeyS} D: ${keys.KeyD} Space: ${keys.Space} E: ${keys.KeyE} Shift: ${keys.ShiftLeft || keys.ShiftRight} Q: ${keys.KeyQ}\nErrors:\n${errors.join('\n')}`;
 }
 
 // Sound setup
@@ -204,6 +211,77 @@ function updateFloorMaterials() {
   });
 }
 
+// Hook functions
+function createHook() {
+  hookMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.2, 8, 8),
+    new THREE.MeshStandardMaterial({ color: 0x8B4513 })
+  );
+  scene.add(hookMesh);
+
+  const ropeGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const ropeMaterial = new THREE.LineBasicMaterial({ color: 0x8B4513, linewidth: 3 });
+  hookLine = new THREE.Line(ropeGeometry, ropeMaterial);
+  scene.add(hookLine);
+}
+
+function updateHook(dt) {
+  if (!hookActive) return;
+
+  // Raycast to find target
+  const direction = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+  raycaster.set(camera.position, direction);
+  const intersects = raycaster.intersectObjects([...floorTiles, ...trees.flatMap(t => t.children)], true);
+
+  if (intersects.length > 0) {
+    const intersect = intersects[0];
+    const distance = intersect.distance;
+    if (distance <= HOOK_MAX_DISTANCE) {
+      hookTarget.copy(intersect.point);
+      // Adjust target y for floor to player height
+      if (floorTiles.includes(intersect.object)) {
+        hookTarget.y = 1.6;
+      }
+      hookMesh.position.copy(hookTarget);
+
+      // Update rope
+      const points = [player.position, hookTarget];
+      hookLine.geometry.setFromPoints(points);
+
+      // Pull player towards target
+      const dirToTarget = new THREE.Vector3().subVectors(hookTarget, player.position).normalize();
+      const pullVel = dirToTarget.multiplyScalar(HOOK_PULL_SPEED * dt);
+      player.position.add(pullVel);
+      vel.copy(pullVel); // Apply to velocity for smooth movement
+
+      // Stop if close enough
+      if (player.position.distanceTo(hookTarget) < 1.0) {
+        hookActive = false;
+        removeHook();
+      }
+    } else {
+      // Too far, deactivate
+      hookActive = false;
+      removeHook();
+    }
+  } else {
+    // No intersect, deactivate
+    hookActive = false;
+    removeHook();
+  }
+}
+
+function removeHook() {
+  if (hookMesh) {
+    scene.remove(hookMesh);
+    hookMesh = null;
+  }
+  if (hookLine) {
+    scene.remove(hookLine);
+    hookLine = null;
+  }
+}
+
 // Wait for DOM to load
 document.addEventListener('DOMContentLoaded', async () => {
   await setupSound();
@@ -249,11 +327,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('keydown', e => {
     const key = e.code;
-    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyE', 'ShiftLeft', 'ShiftRight'].includes(key) && !paused) {
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyE', 'ShiftLeft', 'ShiftRight', 'KeyQ'].includes(key) && !paused) {
       e.preventDefault();
       keys[key] = true;
       console.log(`Key down: ${key}`);
       updateDebugKeys();
+      if (key === 'KeyQ' && !hookActive) {
+        hookActive = true;
+        if (!hookMesh) createHook();
+      }
       if ((key === 'ShiftLeft' || key === 'ShiftRight') && fuel > 0) {
         jetpackActive = true;
         playJetpackSound();
@@ -268,6 +350,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.exitPointerLock();
         jetpackActive = false;
         stopJetpackSound();
+        hookActive = false;
+        removeHook();
       } else {
         if (!isSandboxed) {
           gameArea.focus();
@@ -283,10 +367,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('keyup', e => {
     const key = e.code;
-    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyE', 'ShiftLeft', 'ShiftRight'].includes(key)) {
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyE', 'ShiftLeft', 'ShiftRight', 'KeyQ'].includes(key)) {
       keys[key] = false;
       console.log(`Key up: ${key}`);
       updateDebugKeys();
+      if (key === 'KeyQ') {
+        hookActive = false;
+        removeHook();
+      }
       if (key === 'ShiftLeft' || key === 'ShiftRight') {
         jetpackActive = false;
         stopJetpackSound();
@@ -615,6 +703,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const dt = Math.min(0.05, clock.getDelta());
       gameArea.focus();
       updateMovement(dt);
+      updateHook(dt);
       manageObjects();
 
       for (let i = bullets.length - 1; i >= 0; i--) {
