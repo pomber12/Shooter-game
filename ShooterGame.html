@@ -41,10 +41,10 @@ import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
 
 // Global variables
 let scene, camera, renderer, clock, floorTiles = [];
-let player, yaw = 0, pitch = 0;
+let player, yaw = 0, pitch = 0, hands;
 const bullets = [], enemies = [], chests = [], trees = [], flowers = [];
 let score = 0, hp = 100, bulletCount = 50;
-const keys = { w: false, a: false, s: false, d: false, space: false };
+const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false, Space: false };
 let paused = true;
 let animationFrameId = null;
 const vel = new THREE.Vector3();
@@ -68,7 +68,7 @@ function logError(message) {
 
 function updateDebugKeys() {
   const debugKeys = document.getElementById('debugKeys');
-  debugKeys.textContent = `Keys: W: ${keys.w} A: ${keys.a} S: ${keys.s} D: ${keys.d} Space: ${keys.space}\nErrors:\n${errors.join('\n')}`;
+  debugKeys.textContent = `Keys: W: ${keys.KeyW} A: ${keys.KeyA} S: ${keys.KeyS} D: ${keys.KeyD} Space: ${keys.Space}\nErrors:\n${errors.join('\n')}`;
 }
 
 // Sound setup
@@ -184,6 +184,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
+  // Ensure gameArea is focusable
+  gameArea.setAttribute('tabindex', '0');
+
   // Check if frame is sandboxed
   const isSandboxed = window.frameElement && window.frameElement.sandbox;
   if (isSandboxed && !window.frameElement.sandbox.contains('allow-pointer-lock')) {
@@ -211,41 +214,39 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   window.addEventListener('keydown', e => {
-    if (e.target.tagName !== 'BUTTON') {
-      const key = e.code === 'Space' ? 'space' : e.key.toLowerCase();
-      if (['w', 'a', 's', 'd', 'space'].includes(key)) {
-        e.preventDefault();
-        keys[key] = true;
-        updateDebugKeys();
-      }
-      if (e.keyCode === 27) {
-        paused = !paused;
-        pauseMessage.style.display = paused ? 'block' : 'none';
-        pointerLockMessage.style.display = 'none';
-        if (paused) {
-          cancelAnimationFrame(animationFrameId);
-          document.exitPointerLock();
-        } else {
-          if (!isSandboxed) {
-            gameArea.requestPointerLock().catch(err => {
-              logError('Pointer lock request failed on resume: ' + err.message);
-              pointerLockMessage.style.display = 'block';
-            });
-          }
+    const key = e.code;
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].includes(key) && !paused) {
+      e.preventDefault();
+      keys[key] = true;
+      console.log(`Key down: ${key}`); // Debug key press
+      updateDebugKeys();
+    }
+    if (e.key === 'Escape') {
+      paused = !paused;
+      pauseMessage.style.display = paused ? 'block' : 'none';
+      pointerLockMessage.style.display = paused ? 'none' : 'block';
+      if (paused) {
+        cancelAnimationFrame(animationFrameId);
+        document.exitPointerLock();
+      } else {
+        if (!isSandboxed) {
           gameArea.focus();
-          animate();
+          gameArea.requestPointerLock().catch(err => {
+            logError('Pointer lock request failed on resume: ' + err.message);
+            pointerLockMessage.style.display = 'block';
+          });
         }
+        animate();
       }
     }
   });
 
   window.addEventListener('keyup', e => {
-    if (e.target.tagName !== 'BUTTON') {
-      const key = e.code === 'Space' ? 'space' : e.key.toLowerCase();
-      if (['w', 'a', 's', 'd', 'space'].includes(key)) {
-        keys[key] = false;
-        updateDebugKeys();
-      }
+    const key = e.code;
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].includes(key)) {
+      keys[key] = false;
+      console.log(`Key up: ${key}`); // Debug key release
+      updateDebugKeys();
     }
   });
 
@@ -322,10 +323,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   function updateMovement(dt) {
     if (paused) return;
     const dir = new THREE.Vector3();
-    if (keys.w) dir.z -= 1;
-    if (keys.s) dir.z += 1;
-    if (keys.a) dir.x -= 1;
-    if (keys.d) dir.x += 1;
+    if (keys.KeyW) dir.z -= 1;
+    if (keys.KeyS) dir.z += 1;
+    if (keys.KeyA) dir.x -= 1;
+    if (keys.KeyD) dir.x += 1;
     if (dir.lengthSq() > 0) {
       dir.normalize();
       const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
@@ -336,20 +337,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       vel.x = move.x * 10;
       vel.z = move.z * 10;
       console.log('Movement applied, vel:', vel.x.toFixed(2), vel.z.toFixed(2));
-    } else if (!keys.w && !keys.s && !keys.a && !keys.d) {
+    } else {
       vel.x *= 0.9; // Gradual stop with friction
       vel.z *= 0.9;
       if (Math.abs(vel.x) < 0.1) vel.x = 0;
       if (Math.abs(vel.z) < 0.1) vel.z = 0;
     }
-    vel.y -= 15 * dt;
-    if (onGround && keys.space) {
-      vel.y = 10;
+    vel.y -= 15 * dt; // Gravity
+    if (onGround && keys.Space) {
+      vel.y = 10; // Jump velocity
       onGround = false;
+      console.log('Jump triggered, vel.y:', vel.y);
     }
     const newPosition = player.position.clone().addScaledVector(vel, dt);
     player.position.copy(newPosition);
-    if (player.position.y < 1.61) {
+    if (player.position.y < 1.6) {
       player.position.y = 1.6;
       vel.y = 0;
       onGround = true;
@@ -592,6 +594,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       camera.position.copy(player.position);
       camera.rotation.copy(player.rotation);
+      hands.position.copy(camera.position);
+      hands.rotation.copy(camera.rotation);
       renderer.render(scene, camera);
     }
     animationFrameId = requestAnimationFrame(animate);
@@ -631,6 +635,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     player = new THREE.Object3D();
     player.position.set(0, 1.6, 0);
     scene.add(player);
+
+    // Add hands
+    hands = new THREE.Group();
+    const handGeometry = new THREE.BoxGeometry(0.2, 0.1, 0.4);
+    const handMaterial = new THREE.MeshStandardMaterial({ color: 0xFFDAB9 }); // Skin-like color
+    const leftHand = new THREE.Mesh(handGeometry, handMaterial);
+    leftHand.position.set(-0.3, -0.4, -0.5); // Position left hand in view
+    const rightHand = new THREE.Mesh(handGeometry, handMaterial);
+    rightHand.position.set(0.3, -0.4, -0.5); // Position right hand in view
+    hands.add(leftHand);
+    hands.add(rightHand);
+    scene.add(hands);
 
     for (let i = 0; i < 5; i++) spawnEnemy();
     for (let i = 0; i < 2; i++) spawnChest();
