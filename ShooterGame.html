@@ -26,7 +26,7 @@
   </style>
 </head>
 <body>
-  <div id="hud">Здраве: <span id="hp">100</span> · Точки: <span id="score">0</span> · Куршуми: <span id="bulletCount">50</span></div>
+  <div id="hud">Здраве: <span id="hp">100</span> · Точки: <span id="score">0</span> · Куршуми: <span id="bulletCount">50</span> · Гориво: <span id="fuel">100</span></div>
   <div id="debugKeys"></div>
   <div id="crosshair"></div>
   <div id="menu">
@@ -43,8 +43,8 @@ import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
 let scene, camera, renderer, clock, floorTiles = [];
 let player, yaw = 0, pitch = 0, hands;
 const bullets = [], enemies = [], chests = [], trees = [], flowers = [];
-let score = 0, hp = 100, bulletCount = 50;
-const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false, Space: false };
+let score = 0, hp = 100, bulletCount = 50, fuel = 100;
+const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false, Space: false, KeyE: false, ShiftLeft: false, ShiftRight: false };
 let paused = true;
 let animationFrameId = null;
 const vel = new THREE.Vector3();
@@ -56,27 +56,30 @@ const MAX_BULLETS = 20;
 const MAX_LOCK_RETRIES = 3;
 const MAX_ERRORS = 200;
 let errors = [];
+let jetpackActive = false;
 
 function logError(message) {
   const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
   errors.push(`[${timestamp}] ${message}`);
   if (errors.length > MAX_ERRORS) {
-    errors.shift(); // Remove oldest error if over limit
+    errors.shift();
   }
   updateDebugKeys();
 }
 
 function updateDebugKeys() {
   const debugKeys = document.getElementById('debugKeys');
-  debugKeys.textContent = `Keys: W: ${keys.KeyW} A: ${keys.KeyA} S: ${keys.KeyS} D: ${keys.KeyD} Space: ${keys.Space}\nErrors:\n${errors.join('\n')}`;
+  debugKeys.textContent = `Keys: W: ${keys.KeyW} A: ${keys.KeyA} S: ${keys.KeyS} D: ${keys.KeyD} Space: ${keys.Space} E: ${keys.KeyE} Shift: ${keys.ShiftLeft || keys.ShiftRight}\nErrors:\n${errors.join('\n')}`;
 }
 
 // Sound setup
 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-let gunshotBuffer = null, enemyHitBuffer = null, enemyDeathBuffer = null;
+let gunshotBuffer = null, enemyHitBuffer = null, enemyDeathBuffer = null, jetpackBuffer = null;
 
 async function setupSound() {
   const sampleRate = 44100;
+
+  // Gunshot sound
   const gunshotDuration = 0.1;
   const gunshotSamples = sampleRate * gunshotDuration;
   const gunshotData = new Float32Array(gunshotSamples);
@@ -90,6 +93,7 @@ async function setupSound() {
   gunshotBufferTemp.copyToChannel(gunshotData, 0);
   gunshotBuffer = gunshotBufferTemp;
 
+  // Enemy hit sound
   const hitDuration = 0.15;
   const hitSamples = sampleRate * hitDuration;
   const hitData = new Float32Array(hitSamples);
@@ -103,6 +107,7 @@ async function setupSound() {
   enemyHitBufferTemp.copyToChannel(hitData, 0);
   enemyHitBuffer = enemyHitBufferTemp;
 
+  // Enemy death sound
   const deathDuration = 0.2;
   const deathSamples = sampleRate * deathDuration;
   const deathData = new Float32Array(deathSamples);
@@ -115,6 +120,20 @@ async function setupSound() {
   const enemyDeathBufferTemp = audioContext.createBuffer(1, deathSamples, sampleRate);
   enemyDeathBufferTemp.copyToChannel(deathData, 0);
   enemyDeathBuffer = enemyDeathBufferTemp;
+
+  // Jetpack sound
+  const jetpackDuration = 0.5;
+  const jetpackSamples = sampleRate * jetpackDuration;
+  const jetpackData = new Float32Array(jetpackSamples);
+  for (let i = 0; i < jetpackSamples; i++) {
+    const t = i / sampleRate;
+    const envelope = Math.min(1, t * 10) * Math.exp(-t * 2);
+    const wave = Math.sin(2 * Math.PI * 100 * t) + 0.5 * (Math.random() * 2 - 1);
+    jetpackData[i] = envelope * wave * 0.3;
+  }
+  const jetpackBufferTemp = audioContext.createBuffer(1, jetpackSamples, sampleRate);
+  jetpackBufferTemp.copyToChannel(jetpackData, 0);
+  jetpackBuffer = jetpackBufferTemp;
 }
 
 function playGunshot() {
@@ -139,6 +158,23 @@ function playEnemyDeath() {
   source.buffer = enemyDeathBuffer;
   source.connect(audioContext.destination);
   source.start(0);
+}
+
+let jetpackSoundSource = null;
+function playJetpackSound() {
+  if (!jetpackBuffer || jetpackSoundSource) return;
+  jetpackSoundSource = audioContext.createBufferSource();
+  jetpackSoundSource.buffer = jetpackBuffer;
+  jetpackSoundSource.loop = true;
+  jetpackSoundSource.connect(audioContext.destination);
+  jetpackSoundSource.start(0);
+}
+
+function stopJetpackSound() {
+  if (jetpackSoundSource) {
+    jetpackSoundSource.stop();
+    jetpackSoundSource = null;
+  }
 }
 
 // Grass texture
@@ -184,10 +220,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // Ensure gameArea is focusable
   gameArea.setAttribute('tabindex', '0');
 
-  // Check if frame is sandboxed
   const isSandboxed = window.frameElement && window.frameElement.sandbox;
   if (isSandboxed && !window.frameElement.sandbox.contains('allow-pointer-lock')) {
     logError('Pointer lock blocked: Frame is sandboxed without allow-pointer-lock permission.');
@@ -205,7 +239,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             pointerLockMessage.style.display = 'block';
             lockRetryCount++;
           });
-        }, 300); // Increased delay for focus
+        }, 300);
       } else {
         logError('Game area not focused, click again to retry.');
         pointerLockMessage.style.display = 'block';
@@ -215,11 +249,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('keydown', e => {
     const key = e.code;
-    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].includes(key) && !paused) {
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyE', 'ShiftLeft', 'ShiftRight'].includes(key) && !paused) {
       e.preventDefault();
       keys[key] = true;
-      console.log(`Key down: ${key}`); // Debug key press
+      console.log(`Key down: ${key}`);
       updateDebugKeys();
+      if ((key === 'ShiftLeft' || key === 'ShiftRight') && fuel > 0) {
+        jetpackActive = true;
+        playJetpackSound();
+      }
     }
     if (e.key === 'Escape') {
       paused = !paused;
@@ -228,6 +266,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (paused) {
         cancelAnimationFrame(animationFrameId);
         document.exitPointerLock();
+        jetpackActive = false;
+        stopJetpackSound();
       } else {
         if (!isSandboxed) {
           gameArea.focus();
@@ -243,10 +283,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('keyup', e => {
     const key = e.code;
-    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].includes(key)) {
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyE', 'ShiftLeft', 'ShiftRight'].includes(key)) {
       keys[key] = false;
-      console.log(`Key up: ${key}`); // Debug key release
+      console.log(`Key up: ${key}`);
       updateDebugKeys();
+      if (key === 'ShiftLeft' || key === 'ShiftRight') {
+        jetpackActive = false;
+        stopJetpackSound();
+      }
     }
   });
 
@@ -263,7 +307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (isLocked) {
       pointerLockMessage.style.display = 'none';
       crosshair.classList.add('locked');
-      lockRetryCount = 0; // Reset on success
+      lockRetryCount = 0;
     } else {
       if (!paused) {
         pointerLockMessage.style.display = 'block';
@@ -288,14 +332,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     pointerLockMessage.style.display = 'block';
     gameArea.focus();
     if (document.hasFocus()) {
-      gameArea.click(); // Trigger initial interaction
+      gameArea.click();
       if (!isSandboxed) {
         setTimeout(() => {
           gameArea.requestPointerLock().catch(err => {
             logError('Pointer lock request failed on play: ' + err.message);
             pointerLockMessage.style.display = 'block';
           });
-        }, 300); // Increased delay
+        }, 300);
       }
     } else {
       logError('Game area not focused, click again to retry.');
@@ -338,20 +382,51 @@ document.addEventListener('DOMContentLoaded', async () => {
       vel.z = move.z * 10;
       console.log('Movement applied, vel:', vel.x.toFixed(2), vel.z.toFixed(2));
     } else {
-      vel.x *= 0.9; // Gradual stop with friction
+      vel.x *= 0.9;
       vel.z *= 0.9;
       if (Math.abs(vel.x) < 0.1) vel.x = 0;
       if (Math.abs(vel.z) < 0.1) vel.z = 0;
     }
-    vel.y -= 15 * dt; // Gravity
+
+    // Jetpack logic
+    if ((keys.ShiftLeft || keys.ShiftRight) && fuel > 0) {
+      vel.y += 15 * dt; // Upward thrust
+      vel.y = Math.min(vel.y, 10); // Cap upward speed
+      fuel -= 20 * dt; // Consume fuel
+      fuel = Math.max(0, fuel);
+      onGround = false;
+      jetpackActive = true;
+      console.log('Jetpack active, vel.y:', vel.y.toFixed(2), 'fuel:', fuel.toFixed(2));
+    } else {
+      jetpackActive = false;
+      stopJetpackSound();
+    }
+
+    // Regenerate fuel when not using jetpack
+    if (!(keys.ShiftLeft || keys.ShiftRight)) {
+      fuel += 5 * dt; // Regenerate fuel
+      fuel = Math.min(100, fuel);
+    }
+    document.getElementById('fuel').textContent = Math.floor(fuel);
+
+    // Apply gravity or parachute effect
+    if (!onGround && keys.KeyE && !(keys.ShiftLeft || keys.ShiftRight)) {
+      vel.y -= 3 * dt; // Reduced gravity for parachute
+      vel.y = Math.max(vel.y, -2);
+      console.log('Parachute active, vel.y:', vel.y.toFixed(2));
+    } else if (!(keys.ShiftLeft || keys.ShiftRight)) {
+      vel.y -= 15 * dt; // Normal gravity
+    }
+
     if (onGround && keys.Space) {
-      vel.y = 10; // Jump velocity
+      vel.y = 10;
       onGround = false;
       console.log('Jump triggered, vel.y:', vel.y);
     }
+
     const newPosition = player.position.clone().addScaledVector(vel, dt);
     player.position.copy(newPosition);
-    if (player.position.y < 1.6) {
+    if (player.position.y < 1.6 && !(keys.ShiftLeft || keys.ShiftRight)) {
       player.position.y = 1.6;
       vel.y = 0;
       onGround = true;
@@ -370,7 +445,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       const dist = player.position.distanceTo(chest.position);
       if (dist < 1.5) {
         bulletCount = Math.min(50, bulletCount + 20);
+        fuel = Math.min(100, fuel + 50);
         document.getElementById('bulletCount').textContent = bulletCount;
+        document.getElementById('fuel').textContent = Math.floor(fuel);
         scene.remove(chest);
         chests.splice(i, 1);
       }
@@ -639,11 +716,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Add hands
     hands = new THREE.Group();
     const handGeometry = new THREE.BoxGeometry(0.2, 0.1, 0.4);
-    const handMaterial = new THREE.MeshStandardMaterial({ color: 0xFFDAB9 }); // Skin-like color
+    const handMaterial = new THREE.MeshStandardMaterial({ color: 0xFFDAB9 });
     const leftHand = new THREE.Mesh(handGeometry, handMaterial);
-    leftHand.position.set(-0.3, -0.4, -0.5); // Position left hand in view
+    leftHand.position.set(-0.3, -0.4, -0.5);
     const rightHand = new THREE.Mesh(handGeometry, handMaterial);
-    rightHand.position.set(0.3, -0.4, -0.5); // Position right hand in view
+    rightHand.position.set(0.3, -0.4, -0.5);
     hands.add(leftHand);
     hands.add(rightHand);
     scene.add(hands);
