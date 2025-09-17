@@ -42,7 +42,7 @@ import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
 // Global variables
 let scene, camera, renderer, clock, floorTiles = [];
 let player, yaw = 0, pitch = 0, hands;
-const bullets = [], enemies = [], chests = [], trees = [], flowers = [];
+const bullets = [], enemies = [], chests = [], trees = [], flowers = [], bushes = [];
 let score = 0, hp = 100, bulletCount = 50, fuel = 100;
 const keys = { KeyW: false, KeyA: false, KeyS: false, KeyD: false, Space: false, KeyE: false, ShiftLeft: false, ShiftRight: false, KeyQ: false };
 let paused = true;
@@ -469,7 +469,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       vel.x = move.x * 10;
       vel.z = move.z * 10;
       console.log('Movement applied, vel:', vel.x.toFixed(2), vel.z.toFixed(2));
-    } else {
+    } else if (!hookActive) { // Only dampen if not hooking
       vel.x *= 0.9;
       vel.z *= 0.9;
       if (Math.abs(vel.x) < 0.1) vel.x = 0;
@@ -498,11 +498,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('fuel').textContent = Math.floor(fuel);
 
     // Apply gravity or parachute effect
-    if (!onGround && keys.KeyE && !(keys.ShiftLeft || keys.ShiftRight)) {
+    if (!onGround && keys.KeyE && !(keys.ShiftLeft || keys.ShiftRight) && !hookActive) {
       vel.y -= 3 * dt; // Reduced gravity for parachute
       vel.y = Math.max(vel.y, -2);
       console.log('Parachute active, vel.y:', vel.y.toFixed(2));
-    } else if (!(keys.ShiftLeft || keys.ShiftRight)) {
+    } else if (!(keys.ShiftLeft || keys.ShiftRight) && !hookActive) {
       vel.y -= 15 * dt; // Normal gravity
     }
 
@@ -514,7 +514,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const newPosition = player.position.clone().addScaledVector(vel, dt);
     player.position.copy(newPosition);
-    if (player.position.y < 1.6 && !(keys.ShiftLeft || keys.ShiftRight)) {
+    if (player.position.y < 1.6 && !(keys.ShiftLeft || keys.ShiftRight) && !hookActive) {
       player.position.y = 1.6;
       vel.y = 0;
       onGround = true;
@@ -655,9 +655,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  function spawnBush() {
+    const heightScale = 0.7 + Math.random() * 0.6; // Slightly larger than flowers
+    const bushRadius = 0.8 * heightScale; // Spherical bush
+    const collisionRadius = 0.8 * Math.sqrt(heightScale);
+
+    const bushGeometry = new THREE.SphereGeometry(bushRadius, 8, 8);
+    const bushMaterial = new THREE.MeshStandardMaterial({ color: 0x2E8B57 }); // Same green as tree foliage
+    const bush = new THREE.Mesh(bushGeometry, bushMaterial);
+    bush.position.y = bushRadius; // Rest on ground
+
+    bush.userData = { heightScale, collisionRadius };
+
+    let r, ang, dist;
+    do {
+      r = 15 + Math.random() * 25; // Same spawn range as flowers
+      ang = Math.random() * Math.PI * 2;
+      bush.position.set(player.position.x + Math.cos(ang) * r, bushRadius, player.position.z + Math.sin(ang) * r);
+      dist = bush.position.distanceTo(player.position);
+    } while (dist < 15);
+
+    if (bush instanceof THREE.Object3D) {
+      scene.add(bush);
+      bushes.push(bush);
+    }
+  }
+
   function manageObjects() {
     const maxDistance = 80;
-    const totalObjects = enemies.length + chests.length + trees.length + flowers.length;
+    const totalObjects = enemies.length + chests.length + trees.length + flowers.length + bushes.length;
     if (totalObjects >= MAX_TOTAL_OBJECTS) return;
 
     for (let i = enemies.length - 1; i >= 0; i--) {
@@ -692,10 +718,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         flowers.splice(i, 1);
       }
     }
+    for (let i = bushes.length - 1; i >= 0; i--) {
+      const b = bushes[i];
+      const dist = player.position.distanceTo(b.position);
+      if (dist > maxDistance) {
+        scene.remove(b);
+        bushes.splice(i, 1);
+      }
+    }
     while (enemies.length < 5 && totalObjects < MAX_TOTAL_OBJECTS) spawnEnemy();
     while (chests.length < 2 && totalObjects < MAX_TOTAL_OBJECTS) spawnChest();
     while (trees.length < 10 && totalObjects < MAX_TOTAL_OBJECTS) spawnTree();
     while (flowers.length < 5 && totalObjects < MAX_TOTAL_OBJECTS) spawnFlower();
+    while (bushes.length < 5 && totalObjects < MAX_TOTAL_OBJECTS) spawnBush();
   }
 
   function animate() {
@@ -818,6 +853,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     for (let i = 0; i < 2; i++) spawnChest();
     for (let i = 0; i < 10; i++) spawnTree();
     for (let i = 0; i < 5; i++) spawnFlower();
+    for (let i = 0; i < 5; i++) spawnBush();
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
